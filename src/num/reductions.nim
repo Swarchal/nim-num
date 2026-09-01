@@ -8,11 +8,26 @@
 ## An axis reduction **removes** that axis (`keepDims = true` leaves it at
 ## length 1), which is what makes `a - a.mean(axis = 1, keepDims = true)`
 ## broadcast back over the rows.
+##
+## Two rules hold across every fold here, and both are stated once rather
+## than per-operation:
+##
+## - **A hole propagates.** NaN comes out of `min`, `max`, `ptp`, `sum` and
+##   `mean` alike, and `argmin`/`argmax` return the first one's position.
+##   The `nan`-prefixed forms further down are the ones that skip it.
+## - **What must be non-empty is what the fold is over.** `min` of an empty
+##   array raises because there is no answer; `min` of a (3, 0) *along axis
+##   0* does not, because the result has no lanes that need one. The guards
+##   are `checkNonEmpty` and `checkNonEmptyAxis`, and an axis form wants the
+##   second.
 
 import std/[math, algorithm]
 import ./core
 import ./shape
 import ./creation
+import ./ops   # isHole and the NaN-keeping comparisons: elementwise, so they
+               # live with the other elementwise things and the folds borrow
+               # them rather than restating the rule one layer down
 
 template axisFold*(a: untyped, axisArg: int, keepDims: bool,
                    initVal, accExpr: untyped): untyped =
@@ -63,10 +78,32 @@ func checkNonEmpty[T](a: NDArray[T], op: string) =
   if a.size == 0:
     raise newException(ValueError, op & " of an empty array")
 
+func checkNonEmptyAxis[T](a: NDArray[T], axis: int, op: string) =
+  ## The guard an *axis* fold wants, which is not the same one. What has to
+  ## be non-empty is the axis being folded over: every lane of the result
+  ## needs a value, and a lane is one run along that axis. The array as a
+  ## whole may still be empty — `min` of a (3, 0) along axis 0 is an empty
+  ## array rather than an error, because there is no lane to answer for.
+  ## Checking `a.size` instead made that case raise while `sum` of it did
+  ## not, so the same call shape worked or failed depending on the fold.
+  if a.shape[normAxis(axis, a.ndim)] == 0:
+    raise newException(ValueError, op & " along an axis of length 0")
+
+## **NaN propagates through the plain extremes**, as it does through `sum`
+## and `mean`, and `nanMin`/`nanMax` below are the forms that skip it — the
+## same split as `mean`/`nanMean`. It has to be said in the comparison
+## rather than left to `<`: NaN compares false in *both* directions, so a
+## plain `x < result` silently skips a hole that arrives late and silently
+## keeps one that arrives first. `min` then answered 1.0 for
+## `[1.0, NaN, 3.0]` and NaN for `[NaN, 1.0, 3.0]` — the same multiset, two
+## answers, decided by where the hole sat. That is the bug `nanLast` fixes
+## for sorting; this is the same bug in the folds.
+
 proc min*[T](a: NDArray[T]): T =
   checkNonEmpty(a, "min")
   var first = true
   for x in a:
+    if isHole(x): return x
     if first or x < result:
       result = x
       first = false
@@ -75,28 +112,33 @@ proc max*[T](a: NDArray[T]): T =
   checkNonEmpty(a, "max")
   var first = true
   for x in a:
+    if isHole(x): return x
     if first or x > result:
       result = x
       first = false
 
 proc min*[T](a: NDArray[T], axis: int, keepDims = false): NDArray[T] =
-  checkNonEmpty(a, "min")
-  axisFold(a, axis, keepDims, high(T), system.min(acc, it))
+  checkNonEmptyAxis(a, axis, "min")
+  axisFold(a, axis, keepDims, high(T), minKeepNaN(acc, it))
 
 proc max*[T](a: NDArray[T], axis: int, keepDims = false): NDArray[T] =
-  checkNonEmpty(a, "max")
-  axisFold(a, axis, keepDims, low(T), system.max(acc, it))
+  checkNonEmptyAxis(a, axis, "max")
+  axisFold(a, axis, keepDims, low(T), maxKeepNaN(acc, it))
 
 proc ptp*[T](a: NDArray[T]): T =
-  ## Peak to peak: `max - min`, numpy's name for the range.
+  ## Peak to peak: `max - min`, numpy's name for the range. NaN propagates,
+  ## since both ends do.
   max(a) - min(a)
 
 proc argmin*[T](a: NDArray[T]): int =
-  ## Flat index of the smallest element, ties going to the first.
+  ## Flat index of the smallest element, ties going to the first. A NaN has
+  ## no position in the ordering, so — as numpy does — the first one wins
+  ## outright rather than being skipped over.
   checkNonEmpty(a, "argmin")
   var best: T
   var i = 0
   for x in a:
+    if isHole(x): return i
     if i == 0 or x < best:
       best = x
       result = i
@@ -107,6 +149,7 @@ proc argmax*[T](a: NDArray[T]): int =
   var best: T
   var i = 0
   for x in a:
+    if isHole(x): return i
     if i == 0 or x > best:
       best = x
       result = i
@@ -116,20 +159,27 @@ proc argExtreme[T](a: NDArray[T], axis: int, keepDims: bool,
                    wantMax: bool): NDArray[int] =
   ## `argmin`/`argmax` along an axis. Not an `axisFold`: the accumulator is a
   ## pair (best value, its position) and only the position is returned.
-  checkNonEmpty(a, "arg reduction")
+  ## `holed` carries the third thing the accumulator needs — whether this
+  ## lane has already met a NaN, which nothing later may displace.
+  checkNonEmptyAxis(a, axis, "arg reduction")
   let ax = normAxis(axis, a.ndim)
   var redShape = a.shape
   redShape.delete(ax)
   let rstr = contiguousStrides(redShape)
   var best = newSeq[T](prod(redShape))
   var seen = newSeq[bool](prod(redShape))
+  var holed = newSeq[bool](prod(redShape))
   result = newNDArray[int](redShape)
   for idx, elem in a.pairs:
     var o = 0
     for k in 0 ..< a.ndim:
       if k < ax: o += idx[k] * rstr[k]
       elif k > ax: o += idx[k] * rstr[k - 1]
-    if not seen[o] or (if wantMax: elem > best[o] else: elem < best[o]):
+    if holed[o]: continue
+    if isHole(elem):
+      holed[o] = true
+      result.buf[o] = idx[ax]
+    elif not seen[o] or (if wantMax: elem > best[o] else: elem < best[o]):
       seen[o] = true
       best[o] = elem
       result.buf[o] = idx[ax]
@@ -154,7 +204,11 @@ proc mean*[T](a: NDArray[T]): float =
   s / float(a.size)
 
 proc mean*[T](a: NDArray[T], axis: int, keepDims = false): NDArray[float] =
-  checkNonEmpty(a, "mean")
+  ## The guard is on the axis, not on the array: reducing a (3, 0) along
+  ## axis 0 has no lane to answer for and gives an empty array, where along
+  ## axis 1 there are lanes and nothing in them, which raises. `variance`
+  ## and `std` inherit both readings through this call.
+  checkNonEmptyAxis(a, axis, "mean")
   let n = float(a.shape[normAxis(axis, a.ndim)])
   let totals = axisFold(a, axis, keepDims, 0.0, acc + float(it))
   for i in 0 ..< totals.buf[].len: totals.buf[i] = totals.buf[i] / n

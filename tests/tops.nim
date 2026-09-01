@@ -34,6 +34,29 @@ suite "arithmetic":
     a += ones[float](2, 3)
     check a[1, 1] == 1.0
 
+  test "all four compound assignments take an array as well as a scalar":
+    var a = ones[float](2, 2) * 6.0
+    a *= toNDArray(@[@[1.0, 2.0], @[3.0, 4.0]])
+    check a.toSeq() == @[6.0, 12.0, 18.0, 24.0]
+    a /= toNDArray(@[@[6.0, 6.0], @[6.0, 6.0]])
+    check a.toSeq() == @[1.0, 2.0, 3.0, 4.0]
+    a -= toNDArray(@[1.0, 1.0])              # the right-hand side broadcasts
+    check a.toSeq() == @[0.0, 1.0, 2.0, 3.0]
+    a *= 2.0
+    check a.toSeq() == @[0.0, 2.0, 4.0, 6.0]
+
+  test "a compound assignment does not stretch its destination":
+    # `a` is where the answer goes; broadcasting it would aim many writes at
+    # one cell
+    var row = toNDArray(@[1.0, 2.0, 3.0])
+    expect ValueError: row *= ones[float](2, 3)
+
+  test "*= and /= read an overlapping source as it was":
+    var a = arange(5).astype(float) + 1.0
+    var win = a[1..3]
+    win *= a[0..2]
+    check a.toSeq() == @[1.0, 2.0, 6.0, 12.0, 5.0]
+
 suite "comparisons":
   test "give bool arrays, elementwise":
     let a = arange(4)
@@ -69,8 +92,29 @@ suite "math":
     check minimum(a, 3).toSeq() == @[1, 3, 3]
     check max(a) == 5
 
+  test "the scalar reads from either side, as it does for every operator":
+    let a = toNDArray(@[1, 5, 3])
+    check maximum(3, a).toSeq() == maximum(a, 3).toSeq()
+    check minimum(3, a).toSeq() == minimum(a, 3).toSeq()
+    check maximum(0, a).toSeq() == @[1, 5, 3]
+
+  test "the elementwise pair propagates a hole, as the folds do":
+    # Nim's `min`/`max` are written over `<`, which is false in both
+    # directions for NaN, so they returned whichever operand came first
+    let a = toNDArray(@[1.0, NaN, 3.0])
+    let b = toNDArray(@[2.0, 2.0, NaN])
+    check isNaN(maximum(a, b)).toSeq() == @[false, true, true]
+    check isNaN(minimum(a, b)).toSeq() == @[false, true, true]
+    check maximum(a, b).toSeq()[0] == 2.0
+    check isNaN(maximum(a, 2.0)).toSeq() == @[false, true, false]
+    check isNaN(minimum(2.0, a)).toSeq() == @[false, true, false]
+    check clip(a, 0.0, 2.0).toSeq()[0] == 1.0
+    check isNaN(clip(a, 0.0, 2.0))[1]
+
   test "clip":
     check clip(arange(5), 1, 3).toSeq() == @[1, 1, 2, 3, 3]
+    # an inverted bound gave whichever end each element met first
+    expect ValueError: discard clip(arange(5), 3, 1)
 
   test "isNaN and isFinite":
     let a = toNDArray(@[1.0, NaN, Inf])

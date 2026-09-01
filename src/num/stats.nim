@@ -12,7 +12,7 @@
 ## honest answer. `nanMedian`/`nanQuantile` are the forms that skip holes,
 ## as `nanMean` is for `mean`.
 
-import std/[algorithm, math]
+import std/[algorithm, math, options]
 import ./core
 import ./shape
 import ./creation
@@ -29,8 +29,8 @@ func nanLast*[T](x, y: T): int =
   ## same multiset then answered differently depending on the input order.
   ## Non-float types never reach the NaN branch: `when` compiles it away.
   when T is SomeFloat:
-    let xn = x != x
-    let yn = y != y
+    let xn = isHole(x)
+    let yn = isHole(y)
     if xn or yn:
       if xn and yn: 0 elif xn: 1 else: -1
     else:
@@ -42,14 +42,14 @@ func hasNaN*[T](a: NDArray[T]): bool =
   ## Whether any element is NaN. Always false for a non-float array.
   when T is SomeFloat:
     for x in a:
-      if x != x: return true
+      if isHole(x): return true
   false
 
 func withoutNaN[T: SomeFloat](a: NDArray[T]): seq[T] =
   ## The real values, in input order — what the `nan`-prefixed order
   ## statistics work on. A copy, like everything else that sorts.
   for x in a:
-    if x == x: result.add(x)
+    if not isHole(x): result.add(x)
 
 proc sortedArray*[T](a: NDArray[T], ascending = true): NDArray[T] =
   ## The elements in order, as a new 1-d array. Named `sortedArray` rather
@@ -158,25 +158,75 @@ proc bincount*(a: NDArray[int], minLength = 0): NDArray[int] =
   for x in a: result.buf[x] = result.buf[x] + 1
 
 proc histogram*[T](a: NDArray[T], bins = 10,
-                   range: (float, float) = (0.0, 0.0)): (NDArray[int], NDArray[float]) =
+                   range: Option[(float, float)] = none((float, float))):
+                   (NDArray[int], NDArray[float]) =
   ## Counts and the `bins + 1` edges that produced them. Bins are half-open
   ## `[lo, hi)` except the last, which includes its right edge — otherwise
-  ## the maximum value would fall outside every bin. The default range is
-  ## the data's own min..max; a degenerate one is widened by half a unit
-  ## either side so that a constant array still has a bin to land in.
+  ## the maximum value would fall outside every bin.
+  ##
+  ## The range is the data's own span unless one is given. It is an
+  ## `Option` because a tuple has no spare value to mean "not given": the
+  ## sentinel this used to carry was `(0.0, 0.0)`, so a caller who really
+  ## wanted the interval from 0 to 0 was quietly handed the data's range
+  ## instead. Write `range = some((0.0, 6.0))`. A degenerate *derived*
+  ## range is widened by half a unit either side, so a constant array still
+  ## has a bin to land in, but a degenerate or inverted *given* one raises —
+  ## it cannot be anything but a mistake, and it used to return zero counts
+  ## and decreasing edges without a word.
+  ##
+  ## **A hole is not a value and lands in no bin.** NaN is skipped, and the
+  ## derived range is taken over the real values, so `sum(counts)` is
+  ## `nanCount(a)` rather than `a.size` when the data has holes in it —
+  ## `min`/`max` propagate a NaN and would otherwise make every edge NaN and
+  ## every count meaningless. Points outside an explicit range are dropped
+  ## the same way.
+  ##
+  ## **An infinity is a value, but it is not a bin edge.** `Inf` and
+  ## `NegInf` are kept out of the derived range for the same reason NaN is:
+  ## a derived `hi` of `Inf` makes `width` infinite and `lo + 0.0 * Inf` a
+  ## NaN, so every edge is unusable and every point falls in bin 0 — the
+  ## outcome the NaN filter exists to prevent. They are ordinary values
+  ## everywhere else here, so they are not dropped from the data: once the
+  ## range is finite they simply lie outside it, like any other point out of
+  ## range. A *given* range must be finite for the same reason, and raises
+  ## if it is not.
   if bins < 1: raise newException(ValueError, "histogram needs at least one bin")
   if a.size == 0: raise newException(ValueError, "histogram of an empty array")
-  var lo = range[0]
-  var hi = range[1]
-  if lo == hi:
-    lo = float(min(a))
-    hi = float(max(a))
-  if lo == hi:
-    lo -= 0.5
-    hi += 0.5
+  var lo, hi: float
+  if range.isSome:
+    (lo, hi) = range.get
+    if classify(lo) in {fcNaN, fcInf, fcNegInf} or
+       classify(hi) in {fcNaN, fcInf, fcNegInf}:
+      raise newException(ValueError,
+        "histogram: range (" & $lo & ", " & $hi & ") must be finite")
+    if not (lo < hi):
+      raise newException(ValueError,
+        "histogram: range lo (" & $lo & ") must be below hi (" & $hi & ")")
+  else:
+    var first = true
+    for x in a:
+      if isHole(x): continue
+      let v = float(x)
+      if classify(v) in {fcInf, fcNegInf}: continue
+      if first:
+        lo = v
+        hi = v
+        first = false
+      else:
+        lo = min(lo, v)
+        hi = max(hi, v)
+    if first:
+      raise newException(ValueError,
+        "histogram of an array with no finite values in it: every element " &
+        "is NaN or infinite, so there is no range to bin over. " &
+        "Pass range = some((lo, hi)).")
+    if lo == hi:
+      lo -= 0.5
+      hi += 0.5
   let width = (hi - lo) / float(bins)
   var counts = newNDArray[int](bins)
   for x in a:
+    if isHole(x): continue
     let v = float(x)
     if v < lo or v > hi: continue
     var b = int(floor((v - lo) / width))

@@ -1,0 +1,4 @@
+nimcache/
+tests/t[a-z]*
+!tests/t*.nim
+*.exe

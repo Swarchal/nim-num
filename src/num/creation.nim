@@ -84,11 +84,12 @@ proc arange*[T](start, stop: T, step: T = T(1)): NDArray[T] =
     let span = stop - start
     n = if (span > 0) == (step > 0): max(0, (span + step - (if step > 0: 1 else: -1)) div step)
         else: 0
+  # each point is computed from `start`, never accumulated: adding `step` to
+  # a running total drifts, and `arange(0.0, 1.0, 0.1)` ended at
+  # 0.8999999999999999. This is the care `linspace` takes over its endpoint.
   result = newNDArray[T](n)
-  var x = start
   for i in 0 ..< n:
-    result.buf[i] = x
-    x += step
+    result.buf[i] = start + T(i) * step
 
 proc arange*[T](stop: T): NDArray[T] = arange(T(0), stop, T(1))
   ## `arange` infers its type from its arguments: `arange(6)` is int,
@@ -114,9 +115,14 @@ proc linspace*(start, stop: float, num = 50, endpoint = true): NDArray[float] =
     result.buf[i] = start + float(i) * step
   if endpoint: result.buf[num - 1] = stop
 
-proc logspace*(start, stop: float, num = 50, base = 10.0): NDArray[float] =
+proc logspace*(start, stop: float, num = 50, endpoint = true,
+               base = 10.0): NDArray[float] =
   ## `num` points evenly spaced on a log scale, i.e. `base^linspace(...)`.
-  result = linspace(start, stop, num)
+  ## The exponents are what is evenly spaced, so `endpoint` means what it
+  ## means for `linspace` and is passed straight through — it was silently
+  ## dropped before, which made `endpoint = false` unaskable here.
+  ## The parameter order is numpy's: `endpoint` before `base`.
+  result = linspace(start, stop, num, endpoint)
   for i in 0 ..< result.buf[].len:
     result.buf[i] = pow(base, result.buf[i])
 

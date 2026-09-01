@@ -81,10 +81,28 @@ proc diag*[T](a: NDArray[T]): NDArray[T] =
 
 proc norm*[T: SomeFloat](a: NDArray[T], p = 2.0): T =
   ## Vector p-norm over every element (the Frobenius norm for a matrix at
-  ## `p = 2`). `p = Inf` is the largest absolute value.
+  ## `p = 2`). The three numpy spells out are here too, since each is a
+  ## limit of the formula rather than a value of it: `Inf` is the largest
+  ## absolute value, `-Inf` the smallest, and **`0` counts the non-zeros**.
+  ## `pow(s, 1/p)` answers none of them — at `p = 0` it returned `inf` for
+  ## every input, which is a number, so nothing said it was wrong.
+  ##
+  ## A finite negative `p` is not one of those exceptions: `(Σ|x|^p)^(1/p)`
+  ## is what numpy computes for it and the general branch already does, so
+  ## it goes there. `-Inf` is the limit of exactly that family, and rejecting
+  ## the family while accepting its limit would be the odd rule.
   if p == Inf:
     result = T(0)
     for x in a: result = max(result, abs(x))
+  elif p == NegInf:
+    if a.size == 0:
+      raise newException(ValueError, "norm: -Inf norm of an empty array")
+    result = T(Inf)
+    for x in a: result = min(result, abs(x))
+  elif p == 0.0:
+    result = T(0)
+    for x in a:
+      if x != T(0): result = result + T(1)
   elif p == 1.0:
     result = T(0)
     for x in a: result = result + abs(x)

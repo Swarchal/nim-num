@@ -37,6 +37,17 @@ suite "products":
     check norm(toNDArray(@[3.0, 4.0])) == 5.0
     check norm(toNDArray(@[3.0, -4.0]), 1.0) == 7.0
     check norm(toNDArray(@[3.0, -4.0]), Inf) == 4.0
+    check norm(toNDArray(@[3.0, -4.0]), NegInf) == 3.0
+    # the three numpy spells out are limits of the formula, not values of
+    # it: `pow(s, 1/p)` returned inf here whatever the input
+    check norm(toNDArray(@[3.0, 0.0, -4.0]), 0.0) == 2.0
+    check norm(zeros[float](3), 0.0) == 0.0
+    # a finite negative p is the ordinary formula, as it is in numpy, and
+    # -Inf above is its limit — accepting one and rejecting the other was
+    # the odd rule
+    check abs(norm(toNDArray(@[3.0, -4.0]), -1.0) - 12.0 / 7.0) < 1e-12
+    check abs(norm(toNDArray(@[3.0, -4.0]), -2.0) - 2.4) < 1e-12
+    check norm(toNDArray(@[3.0, 0.0, -4.0]), -1.0) == 0.0   # 1/0 dominates
 
 suite "solving":
   let a = toNDArray(@[@[2.0, 1.0], @[1.0, 3.0]])

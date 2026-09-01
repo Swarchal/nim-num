@@ -1,4 +1,4 @@
-import std/[unittest, math]
+import std/[unittest, math, options]
 import num
 
 suite "order statistics":
@@ -100,8 +100,43 @@ suite "distributions of values":
 
   test "an explicit range drops what falls outside":
     let (counts, _) = histogram(toNDArray(@[0.0, 5.0, 10.0]), bins = 2,
-                                range = (0.0, 6.0))
+                                range = some((0.0, 6.0)))
     check sum(counts) == 2
+
+  test "a range is asked for, never inferred from a sentinel":
+    # `(0.0, 0.0)` used to mean "no range given", so this interval was
+    # unaskable: the call quietly binned over the data's own span instead
+    let a = toNDArray(@[-1.0, 0.0, 1.0])
+    let (counts, edges) = histogram(a, bins = 2, range = some((0.0, 0.0001)))
+    check counts.toSeq() == @[1, 0]
+    check edges[0] == 0.0
+    expect ValueError: discard histogram(a, bins = 2, range = some((5.0, 0.0)))
+    expect ValueError: discard histogram(a, bins = 2, range = some((3.0, 3.0)))
+
+  test "a hole is not a value and lands in no bin":
+    let a = toNDArray(@[1.0, NaN, 2.0, NaN, 3.0])
+    let (counts, edges) = histogram(a, bins = 2)
+    check sum(counts) == nanCount(a)           # the NaNs are not counted
+    check edges.toSeq() == @[1.0, 2.0, 3.0]    # nor do they reach the range
+    check not hasNaN(edges)
+    let (byRange, _) = histogram(a, bins = 2, range = some((0.0, 4.0)))
+    check sum(byRange) == 3
+    expect ValueError: discard histogram(full(@[3], NaN), bins = 2)
+
+  test "an infinity is a value but never a bin edge":
+    # a derived `hi` of Inf makes width infinite and `lo + 0.0 * Inf` a NaN,
+    # so every edge was unusable and every point landed in bin 0
+    let a = toNDArray(@[0.0, 1.0, Inf])
+    let (counts, edges) = histogram(a, bins = 2)
+    check not hasNaN(edges)
+    check edges.toSeq() == @[0.0, 0.5, 1.0]    # Inf stays out of the range
+    check counts.toSeq() == @[1, 1]            # and then falls outside it
+    let b = toNDArray(@[NegInf, 0.0, 1.0, Inf])
+    check histogram(b, bins = 2)[1].toSeq() == @[0.0, 0.5, 1.0]
+    # nothing finite to bin over, and a given range has to be finite too
+    expect ValueError: discard histogram(toNDArray(@[Inf, NegInf]), bins = 2)
+    expect ValueError: discard histogram(a, bins = 2, range = some((0.0, Inf)))
+    expect ValueError: discard histogram(a, bins = 2, range = some((NegInf, 1.0)))
 
 suite "two-variable summaries":
   let x = toNDArray(@[1.0, 2.0, 3.0, 4.0])

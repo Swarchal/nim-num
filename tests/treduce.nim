@@ -154,3 +154,81 @@ suite "NaN-aware folds":
     check nanCount(withInf) == 2
     # an all-Inf slice must not be mistaken for an empty one
     check nanMax(toNDArray(@[@[Inf, Inf]]), axis = 1).toSeq() == @[Inf]
+
+suite "holes in the plain extremes":
+  # NaN compares false in both directions, so a comparison written as a bare
+  # `x < best` skips a hole that arrives late and keeps one that arrives
+  # first: the same multiset used to give two different answers depending on
+  # where the hole sat. These pin the propagating rule down from both sides.
+  let late = toNDArray(@[1.0, NaN, 3.0])
+  let early = toNDArray(@[NaN, 1.0, 3.0])
+
+  test "min and max propagate wherever the hole sits":
+    check isNaN(min(late))
+    check isNaN(min(early))
+    check isNaN(max(late))
+    check isNaN(max(early))
+    check isNaN(ptp(late))
+
+  test "argmin and argmax give the first hole's position":
+    check argmin(late) == 1
+    check argmax(late) == 1
+    check argmin(early) == 0
+    check argmax(early) == 0
+
+  test "along an axis, only the lane holding the hole is spoiled":
+    let a = toNDArray(@[@[1.0, NaN, 3.0], @[4.0, 5.0, 6.0]])
+    let lo = min(a, axis = 1)
+    check isNaN(lo[0])
+    check lo[1] == 4.0
+    let hi = max(a, axis = 0)
+    check hi[0] == 4.0
+    check isNaN(hi[1])
+    check hi[2] == 6.0
+    check argmin(a, axis = 1).toSeq() == @[1, 0]     # the hole wins its lane
+    check argmax(a, axis = 0).toSeq() == @[1, 0, 1]
+
+  test "the nan forms are still the ones that skip":
+    check nanMin(late) == 1.0
+    check nanMax(early) == 3.0
+    check nanMin(late, axis = 0).toSeq() == @[1.0]
+
+  test "an array with no holes is untouched by any of it":
+    let a = arange(6).reshape(2, 3)
+    check min(a) == 0
+    check max(a) == 5
+    check argmax(a) == 5
+    check min(a, axis = 0).toSeq() == @[0, 1, 2]
+    check argmax(a, axis = 1).toSeq() == @[2, 2]
+
+suite "empty axes":
+  # `min` of an empty array raises because there is no answer. Reducing a
+  # (3, 0) along axis 0 is not that case: the result has no lanes, so there
+  # is nothing to answer for and the answer is an empty array. `sum` always
+  # got this right; the extremes used to guard on `a.size` and raise.
+  let noCols = zeros[int](3, 0)
+
+  test "folding over a non-empty axis of an empty array gives an empty result":
+    check min(noCols, axis = 0).shape == @[0]
+    check max(noCols, axis = 0).shape == @[0]
+    check sum(noCols, axis = 0).shape == @[0]
+    check mean(noCols, axis = 0).shape == @[0]
+    check argmax(noCols, axis = 0).shape == @[0]
+    check variance(noCols, axis = 0).shape == @[0]
+    check nanMean(zeros[float](3, 0), axis = 0).shape == @[0]
+
+  test "folding over the empty axis itself has no answer and raises":
+    expect ValueError: discard min(noCols, axis = 1)
+    expect ValueError: discard max(noCols, axis = 1)
+    expect ValueError: discard mean(noCols, axis = 1)
+    expect ValueError: discard argmax(noCols, axis = 1)
+    check sum(noCols, axis = 1).toSeq() == @[0, 0, 0]   # ... but a sum has one
+
+  test "the whole-array forms still raise on an empty array":
+    expect ValueError: discard min(noCols)
+    expect ValueError: discard argmax(noCols)
+    expect ValueError: discard mean(noCols)
+
+  test "keepDims and a negative axis read the same guard":
+    check min(noCols, axis = -2, keepDims = true).shape == @[1, 0]
+    expect ValueError: discard min(noCols, axis = -1)

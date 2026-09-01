@@ -795,6 +795,26 @@ echo corr(a, a * 2.0)
 # 1.0
 ```
 
+The range is the data's own span unless you ask for one, and you ask with an
+`Option` — a tuple has no spare value to mean "not given", so the interval
+from 0 to 0 would otherwise be unaskable. A hole is not a value and lands in
+no bin, so `sum(counts)` is `nanCount(a)` when the data has holes in it:
+
+```nim
+import std/options
+
+let a = toNDArray(@[0.0, 5.0, 10.0, NaN])
+
+echo histogram(a, bins = 2, range = some((0.0, 6.0)))[0]   # 10.0 is outside
+# array([1, 1])
+
+echo histogram(a, bins = 2)[0]             # NaN reaches neither bin nor edge
+# array([1, 2])
+
+echo histogram(a, bins = 2)[1]
+# array([ 0.0,  5.0, 10.0])
+```
+
 ## Random
 
 The generator is `std/random`'s global one, so these are `proc`, not `func`.

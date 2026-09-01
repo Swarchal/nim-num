@@ -94,18 +94,37 @@ proc `div`*(a: NDArray[int], s: int): NDArray[int] = mapIt(a, it div s)
 proc `mod`*(a, b: NDArray[int]): NDArray[int] = zipIt(a, b, x mod y)
 proc `mod`*(a: NDArray[int], s: int): NDArray[int] = mapIt(a, it mod s)
 
-proc `+=`*[T](a: var NDArray[T], b: NDArray[T]) =
-  let src = if b.buf == a.buf: b.copy() else: b   # see `setSelect`: views alias
-  let rhs = src.broadcastTo(a.shape)
-  for oa, ob in offsets2(a, rhs): a.buf[oa] = a.buf[oa] + rhs.buf[ob]
+template inplaceZip(dst, src, op: untyped) =
+  ## The body every compound assignment shares: broadcast the right-hand
+  ## side to the destination, walk the two in lockstep, write through the
+  ## view. `op` sees the operands as `x` and `y`, as `zipIt` does.
+  ##
+  ## The destination is not broadcast — it is where the answer goes, and
+  ## stretching it would make one cell the target of many writes. So the
+  ## right-hand side must fit `dst` as it stands: `a += rowVector` is fine,
+  ## `rowVector += a` is not.
+  block:
+    # `a += a[0..2]` reads cells the loop has already written, so a source
+    # sharing the destination's buffer is materialised first — the same
+    # guarantee `setSelect` makes.
+    let source = if src.buf == dst.buf: src.copy() else: src
+    let rhs = source.broadcastTo(dst.shape)
+    for oa, ob in offsets2(dst, rhs):
+      let x {.inject.} = dst.buf[oa]
+      let y {.inject.} = rhs.buf[ob]
+      dst.buf[oa] = op
+
+proc `+=`*[T](a: var NDArray[T], b: NDArray[T]) = inplaceZip(a, b, x + y)
 proc `+=`*[T](a: var NDArray[T], s: T) = applyIt(a, it + s)
-proc `-=`*[T](a: var NDArray[T], b: NDArray[T]) =
-  let src = if b.buf == a.buf: b.copy() else: b   # see `setSelect`: views alias
-  let rhs = src.broadcastTo(a.shape)
-  for oa, ob in offsets2(a, rhs): a.buf[oa] = a.buf[oa] - rhs.buf[ob]
+proc `-=`*[T](a: var NDArray[T], b: NDArray[T]) = inplaceZip(a, b, x - y)
 proc `-=`*[T](a: var NDArray[T], s: T) = applyIt(a, it - s)
+proc `*=`*[T](a: var NDArray[T], b: NDArray[T]) = inplaceZip(a, b, x * y)
 proc `*=`*[T](a: var NDArray[T], s: T) = applyIt(a, it * s)
+proc `/=`*[T: SomeFloat](a: var NDArray[T], b: NDArray[T]) = inplaceZip(a, b, x / y)
 proc `/=`*[T: SomeFloat](a: var NDArray[T], s: T) = applyIt(a, it / s)
+  ## The four compound assignments, each in both forms. `/=` is float-only,
+  ## as `/` is: integer division that rounds is `div`, and it would have to
+  ## round to write back into an int array.
 
 # -------------------------------------------------------- comparisons -----
 
@@ -174,18 +193,56 @@ proc pow*[T: SomeFloat](a: NDArray[T], p: T): NDArray[T] = mapIt(a, math.pow(it,
 proc pow*[T: SomeFloat](a, b: NDArray[T]): NDArray[T] = zipIt(a, b, math.pow(x, y))
 proc `^`*[T: SomeFloat](a: NDArray[T], p: T): NDArray[T] = pow(a, p)
 
-proc isNaN*[T: SomeFloat](a: NDArray[T]): NDArray[bool] = mapIt(a, it != it)
-proc isFinite*[T: SomeFloat](a: NDArray[T]): NDArray[bool] =
-  mapIt(a, it == it and it != Inf and it != -Inf)
+func isHole*[T](x: T): bool {.inline.} =
+  ## True only for NaN — **the single elementwise statement of what a hole
+  ## is**, so no operation, fold, sort or bin restates `x != x` and none of
+  ## them can disagree about it. `isNaN` below is the whole-array reading of
+  ## the same question. Non-float element types never reach the branch:
+  ## `when` compiles it away, so an int array pays nothing for the check.
+  when T is SomeFloat: x != x
+  else: false
 
-proc maximum*[T](a, b: NDArray[T]): NDArray[T] = zipIt(a, b, max(x, y))
-proc maximum*[T](a: NDArray[T], s: T): NDArray[T] = mapIt(a, max(it, s))
-proc minimum*[T](a, b: NDArray[T]): NDArray[T] = zipIt(a, b, min(x, y))
-proc minimum*[T](a: NDArray[T], s: T): NDArray[T] = mapIt(a, min(it, s))
-  ## `maximum`/`minimum` are the *elementwise* pair, as in numpy; `max`/`min`
-  ## in `reductions` are the folds.
+func minKeepNaN*[T](x, y: T): T {.inline.} =
+  ## `min`, with a hole winning. Nim's `min` is written over `<`, which is
+  ## false in both directions for NaN, so it silently returns whichever
+  ## operand it happened to test first — the same bug the folds had. This
+  ## is what `minimum` and `min(axis)` both compare with.
+  when T is SomeFloat:
+    if isHole(x) or isHole(y): T(NaN) else: system.min(x, y)
+  else:
+    system.min(x, y)
+
+func maxKeepNaN*[T](x, y: T): T {.inline.} =
+  when T is SomeFloat:
+    if isHole(x) or isHole(y): T(NaN) else: system.max(x, y)
+  else:
+    system.max(x, y)
+
+proc isNaN*[T: SomeFloat](a: NDArray[T]): NDArray[bool] = mapIt(a, isHole(it))
+proc isFinite*[T: SomeFloat](a: NDArray[T]): NDArray[bool] =
+  mapIt(a, not isHole(it) and it != Inf and it != -Inf)
+
+## `maximum`/`minimum` are the *elementwise* pair, as in numpy; `max`/`min`
+## in `reductions` are the folds. Both orders of the scalar form are here,
+## as they are for every operator above — `maximum(0.0, a)` is how a floor
+## reads when the bound is the thing being talked about. All four propagate
+## NaN, agreeing with the folds and with numpy's ufuncs.
+
+proc maximum*[T](a, b: NDArray[T]): NDArray[T] = zipIt(a, b, maxKeepNaN(x, y))
+proc maximum*[T](a: NDArray[T], s: T): NDArray[T] = maximum(a, scalarArray(s))
+proc maximum*[T](s: T, a: NDArray[T]): NDArray[T] = maximum(scalarArray(s), a)
+proc minimum*[T](a, b: NDArray[T]): NDArray[T] = zipIt(a, b, minKeepNaN(x, y))
+proc minimum*[T](a: NDArray[T], s: T): NDArray[T] = minimum(a, scalarArray(s))
+proc minimum*[T](s: T, a: NDArray[T]): NDArray[T] = minimum(scalarArray(s), a)
 
 proc clip*[T](a: NDArray[T], lo, hi: T): NDArray[T] =
+  ## Every element brought inside `lo .. hi`. An inverted bound is a caller's
+  ## mistake, not a request: `clip(a, 3, 1)` used to give whichever end each
+  ## element was compared against first, which is neither bound and no
+  ## intelligible answer.
+  if lo > hi:
+    raise newException(ValueError,
+      "clip: lo (" & $lo & ") is above hi (" & $hi & ")")
   mapIt(a, (if it < lo: lo elif it > hi: hi else: it))
 
 # ------------------------------------------------------------ selection ----

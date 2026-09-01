@@ -28,11 +28,21 @@ suite "construction and geometry":
     check arange(1, 7, 2).toSeq() == @[1, 3, 5]
     check arange(5, 0, -2).toSeq() == @[5, 3, 1]
     check arange(0.0, 1.0, 0.25).size == 4
+    # every point is computed from `start`: accumulating `step` drifted, and
+    # this used to end at 0.8999999999999999
+    check arange(0.0, 1.0, 0.1).toSeq()[^1] == 0.9
+    check arange(1.0, 0.0, -0.25).toSeq() == @[1.0, 0.75, 0.5, 0.25]
     let l = linspace(0.0, 1.0, 5)
     check l.toSeq() == @[0.0, 0.25, 0.5, 0.75, 1.0]
     check linspace(0.0, 1.0, 5)[4] == 1.0        # the endpoint is exact
     check linspace(0.0, 1.0, 4, endpoint = false).toSeq() == @[0.0, 0.25, 0.5, 0.75]
     check linspace(2.0, 3.0, 1).toSeq() == @[2.0]
+
+  test "logspace spaces the exponents, endpoint and all":
+    check logspace(0.0, 3.0, 4).toSeq() == @[1.0, 10.0, 100.0, 1000.0]
+    # `endpoint` used to be missing here, so this was unaskable
+    check logspace(0.0, 2.0, 2, endpoint = false).toSeq() == @[1.0, 10.0]
+    check logspace(0.0, 3.0, 4, base = 2.0).toSeq() == @[1.0, 2.0, 4.0, 8.0]
 
   test "eye and full":
     let i3 = eye[float](3)
@@ -74,6 +84,10 @@ suite "equality and printing":
     check $toNDArray(@[2.718281828459045]) == "array([2.71828])"
     check $toNDArray(@[1e-12]) == "array([1.0e-12])"
     check $toNDArray(@[NaN, Inf]) == "array([nan, inf])"
+
+  test "an empty array prints its shape the way describe does":
+    check $zeros[int](0, 3) == "array([], shape=(0, 3))"
+    check $zeros[int](0) == "array([], shape=(0))"
 
   test "describe":
     check arange(6).reshape(2, 3).describe ==

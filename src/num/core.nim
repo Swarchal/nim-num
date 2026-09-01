@@ -296,7 +296,9 @@ proc `$`*[T](a: NDArray[T]): string =
   if a.shape.len == 0:
     return "array(" & formatElem(a.item) & ")"
   if a.size == 0:
-    return "array([], shape=" & $a.shape & ")"
+    # the shape is spelled as `describe` spells it: `$seq` would put Nim's
+    # `@[0, 3]` in front of a user who never mentioned a seq
+    return "array([], shape=(" & a.shape.join(", ") & "))"
   let edge = if a.size > printThreshold: printEdgeItems else: 0
   var idx = newSeq[int](a.shape.len)
   var width = 0
