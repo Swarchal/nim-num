@@ -3,15 +3,18 @@
 ## `a[1, All]`, `a[0..2, 1..^1]`, `a[span(0, 8, 2)]` — one `Sel` per axis,
 ## reached through implicit converters so an ordinary `int` or Nim slice can
 ## be written where a `Sel` is expected. Missing trailing axes are taken
-## whole, as in numpy, so `a[1]` is `a[1, All]` on a 2-d array.
+## whole, as in numpy, so `a.select(1)` is `a[1, All]` on a 2-d array.
+## Through `[]` an all-integer index must name every axis, so `a[1]` there
+## is an error rather than a row (see `index.nim`).
 ##
 ## A slice is a **view**: it shares the buffer, so writing through it writes
 ## into the parent. `a[0..1].copy()` is how you get a detached one. An
-## integer selection **drops** that axis (`a[1]` of a 2-d array is 1-d);
+## integer selection **drops** that axis (`a[1, All]` of a 2-d array is 1-d);
 ## a one-element span keeps it (`a[1..1]` stays 2-d). That distinction is
 ## numpy's, and it is what makes `a[i, j]` a scalar.
 ##
-## `_` cannot be an identifier in Nim, so numpy's `:` is spelled `All`.
+## `_` cannot be an identifier in Nim, so numpy's `:` is spelled `All`, and
+## Nim will not parse a bare `...`, so numpy's Ellipsis is spelled `Rest`.
 
 import ./core
 import ./shape
@@ -21,6 +24,7 @@ type
     selAll
     selIndex
     selSpan
+    selRest
 
   Sel* = object
     ## One axis's worth of selection.
@@ -32,9 +36,16 @@ type
     of selSpan:
       first*, last*, step*: int
       firstFromEnd*, lastFromEnd*: bool
+    of selRest: discard
 
 const All* = Sel(kind: selAll)
   ## The whole axis — numpy's bare `:`.
+
+const Rest* = Sel(kind: selRest)
+  ## As many `All`s as it takes to cover the axes the other selections do
+  ## not name — numpy's `...`. `a[Rest, 1]` indexes the **last** axis where
+  ## `a[All, 1]` indexes the second, and it may stand for no axes at all. At
+  ## most one per selection.
 
 func span*(first, last: int, step = 1): Sel =
   ## An explicit strided run, both ends **inclusive** (as Nim's `..` and
@@ -70,7 +81,8 @@ func applySel(s: Sel, n, stride: int): tuple[len, stride, offset: int, drop: boo
   ## What one selection does to one axis: its new length and stride, the
   ## offset it contributes, and whether the axis disappears.
   case s.kind
-  of selAll:
+  of selAll, selRest:
+    # `Rest` has been expanded into `All`s by `expandRest` before this runs
     (n, stride, 0, false)
   of selIndex:
     let i = resolve(s.idx, s.idxFromEnd, n)
@@ -95,12 +107,28 @@ func applySel(s: Sel, n, stride: int): tuple[len, stride, offset: int, drop: boo
                     (if b > a: 0 else: (a - b) div (-s.step) + 1)
       (count, s.step * stride, a * stride, false)
 
+func expandRest(sels: openArray[Sel], ndim: int): seq[Sel] =
+  ## The one place `Rest` is resolved: replaced by however many `All`s leave
+  ## one selection per axis, with any after it lined up against the last axes.
+  var at = -1
+  for i, s in sels:
+    if s.kind == selRest:
+      if at >= 0:
+        raise newException(ValueError, "at most one `Rest` per selection")
+      at = i
+  let named = if at >= 0: sels.len - 1 else: sels.len
+  if named > ndim:
+    raise newException(ValueError,
+      $named & " selections for a " & $ndim & "-d array")
+  if at < 0: return @sels
+  result = @(sels[0 ..< at])
+  for _ in 0 ..< ndim - named: result.add(All)
+  result.add(sels[at + 1 .. ^1])
+
 proc select*[T](a: NDArray[T], sels: varargs[Sel]): NDArray[T] =
   ## A view selected axis by axis. Trailing axes not mentioned are taken
   ## whole. Users reach this through `[]`.
-  if sels.len > a.ndim:
-    raise newException(ValueError,
-      $sels.len & " selections for a " & $a.ndim & "-d array")
+  let sels = expandRest(sels, a.ndim)
   var shape, strides: seq[int]
   var offset = a.offset
   for ax in 0 ..< a.ndim:

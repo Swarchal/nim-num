@@ -1,4 +1,5 @@
 import std/unittest
+import std/sequtils
 import num
 
 suite "selection":
@@ -38,6 +39,44 @@ suite "selection":
     win.fill(0)
     check b[1, 1] == 0
     check b[0, 1] == 1
+
+suite "Rest":
+  let a = arange(24).reshape(2, 3, 4)
+
+  test "it covers the axes the others leave, so a trailing index is the last axis":
+    check a[Rest, 1].shape == @[2, 3]
+    check a[Rest, 1] == a[All, All, 1]
+    check a[1, Rest].shape == @[3, 4]
+    check a[1, Rest] == a[1, All, All]
+    check a[0, Rest, 2] == a[0, All, 2]
+    check a[Rest, 1..2].shape == @[2, 3, 2]
+
+  test "it is not All":
+    check a[All, 1].shape == @[2, 4]
+    check a[Rest, 1].shape == @[2, 3]
+
+  test "it may stand for no axes at all":
+    check a[Rest] == a
+    check a[0, 1, Rest, 2].item == a[0, 1, 2]
+
+  test "it is a Sel, so an all-other-int index still gives a 0-d view":
+    let v = arange(5)
+    check v[Rest, 3].ndim == 0
+    check v[Rest, 3].item == 3
+    check v[Rest, ^1].item == 4
+
+  test "at most one, and it does not excuse too many selections":
+    expect ValueError: discard a[Rest, 0, Rest]
+    expect ValueError: discard a[0, 0, 0, 0, Rest]
+
+  test "assignment through it":
+    var b = zeros[int](2, 3, 4)
+    b[Rest, 0] = 7
+    check b[All, All, 0].toSeq().allIt(it == 7)
+    check sum(b) == 7 * 6
+    b[1, Rest] = ones[int](4)
+    check b[1, 2, 3] == 1
+    check b[0, 2, 3] == 0
 
 suite "assignment":
   test "a scalar fills the selection":

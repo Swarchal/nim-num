@@ -323,6 +323,25 @@ echo a
 #        [0, 0, 0, 3]])
 ```
 
+`Rest` is numpy's `...` (Nim will not parse a bare `...`): as many `All`s as
+it takes to cover the axes nothing else names. It is not `All` — a selection
+after it lines up against the *last* axes:
+
+```nim
+let a = arange(24).reshape(2, 3, 4)
+
+echo a[Rest, 1]                            # index 1 on the last axis
+# array([[ 1,  5,  9],
+#        [13, 17, 21]])
+
+echo a[All, 1]                             # index 1 on the second axis
+# array([[ 4,  5,  6,  7],
+#        [16, 17, 18, 19]])
+
+echo a[1, Rest, 0]
+# array([12, 16, 20])
+```
+
 ## Masks, `where` and `take`
 
 Comparisons give an `NDArray[bool]`; indexing with one selects the elements
@@ -1063,7 +1082,7 @@ echo a.neq(2)
 |---|---|
 | **create** | `toNDArray`/`arr`, `zeros`, `ones`, `full`, `empty`, `arange`, `linspace`, `logspace`, `eye`, `identity`, `meshgrid`, `zerosLike`, `onesLike`, `fullLike` |
 | **shape** | `reshape`, `ravel`, `flatten`, `transpose`/`t`, `swapAxes`, `moveAxis`, `expandDims`, `squeeze`, `flip`, `broadcastTo`, `broadcastShapes`, `concat`, `stack`, `vstack`, `hstack`, `astype` |
-| **index** | `a[i, j]`, `a[1, All]`, `a[0..2, 1..^1]`, `span(0, 8, 2)`, `a[mask]`, `take`, `nonZero`, `row`, `col`, and the assigning form of each |
+| **index** | `a[i, j]`, `a[1, All]`, `a[Rest, 0]`, `a[0..2, 1..^1]`, `span(0, 8, 2)`, `a[mask]`, `take`, `nonZero`, `row`, `col`, and the assigning form of each |
 | **ops** | `+ - * /`, `div`, `mod`, `+=`/`-=`/`*=`/`/=`, comparisons → `NDArray[bool]`, `eq`/`neq`, `and`/`or`/`xor`/`not`, `sqrt`/`exp`/`ln`/trig/`floor`…, `abs`, `sign`, `pow`, `clip`, `maximum`/`minimum`, `where`, `allclose`, `mapIt`/`zipIt`/`applyIt` |
 | **reduce** | `sum`, `prod`, `min`, `max`, `ptp`, `argmin`, `argmax`, `mean`, `variance`, `std`, `all`, `any`, `countNonZero`, `cumsum`, `cumprod`, `diff` — each whole-array or along an axis; `nanSum`, `nanMean`, `nanMin`, `nanMax`, `nanVariance`, `nanStd`, `nanCount` for data with holes in it |
 | **linalg** | `dot`, `matmul`, `outer`, `trace`, `diag`, `norm`, `solve`, `inv`, `det`, `lstsq` |
