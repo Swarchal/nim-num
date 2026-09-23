@@ -135,8 +135,9 @@ template cmpOp(name, body: untyped) =
 
 cmpOp(`<`, x < y)
 cmpOp(`<=`, x <= y)
-cmpOp(`>`, x > y)
-cmpOp(`>=`, x >= y)
+# `>` and `>=` are `system` templates that swap the operands onto `<` and
+# `<=`, so `a > 6` is `6 < a` — the same comparison, NaN included. Defining
+# them here as well is what Nim's InvalidCmpOp warning is about.
 cmpOp(eq, x == y)
 cmpOp(neq, x != y)
 
