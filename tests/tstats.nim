@@ -29,6 +29,12 @@ suite "order statistics":
     check iqr(a) == 1.5
     expect ValueError: discard quantile(a, 1.5)
 
+  test "a NaN q is rejected, not used as an index":
+    let a = toNDArray(@[1.0, 2.0, 3.0])
+    expect ValueError: discard quantile(a, NaN)
+    expect ValueError: discard nanQuantile(a, NaN)
+    expect ValueError: discard percentile(a, NaN)
+
   test "unique is sorted and distinct":
     check unique(toNDArray(@[3, 1, 3, 1, 2])).toSeq() == @[1, 2, 3]
 
@@ -137,6 +143,19 @@ suite "distributions of values":
     expect ValueError: discard histogram(toNDArray(@[Inf, NegInf]), bins = 2)
     expect ValueError: discard histogram(a, bins = 2, range = some((0.0, Inf)))
     expect ValueError: discard histogram(a, bins = 2, range = some((NegInf, 1.0)))
+
+  test "a value on an edge lands in the bin that edge opens":
+    # `floor((v - lo) / width)` and `lo + k * width` round differently, so
+    # the bin index has to be checked against the edges it is reported with
+    for i in 0 ..< 20:
+      for bins in [3, 7, 10, 34]:
+        let lo = 31.028874605464296 + 0.37 * float(i)
+        let hi = lo + 9.128413426640564 + 0.11 * float(i)
+        let r = some((lo, hi))
+        let edges = histogram(toNDArray(@[lo]), bins = bins, range = r)[1]
+        for k in 0 .. bins:
+          let counts = histogram(toNDArray(@[edges[k]]), bins = bins, range = r)[0]
+          check counts[min(k, bins - 1)] == 1
 
 suite "two-variable summaries":
   let x = toNDArray(@[1.0, 2.0, 3.0, 4.0])

@@ -94,7 +94,7 @@ proc quantile*[T](a: NDArray[T], q: float): float =
   ## Linear interpolation between the two neighbouring order statistics —
   ## numpy's default `method="linear"`, so `quantile(x, 0.5) == median(x)`.
   if a.size == 0: raise newException(ValueError, "quantile of an empty array")
-  if q < 0.0 or q > 1.0:
+  if not (q >= 0.0 and q <= 1.0):   # written so that a NaN q fails it too
     raise newException(ValueError, "quantile: q must be in 0..1, got " & $q)
   if hasNaN(a): return NaN          # as `median`, and for the same reason
   let xs = sortedArray(a).toSeq()
@@ -125,7 +125,7 @@ proc nanMedian*[T: SomeFloat](a: NDArray[T]): float =
 
 proc nanQuantile*[T: SomeFloat](a: NDArray[T], q: float): float =
   ## `quantile` over the values that are not NaN.
-  if q < 0.0 or q > 1.0:
+  if not (q >= 0.0 and q <= 1.0):
     raise newException(ValueError, "nanQuantile: q must be in 0..1, got " & $q)
   let xs = withoutNaN(a)
   if xs.len == 0:
@@ -224,6 +224,9 @@ proc histogram*[T](a: NDArray[T], bins = 10,
       lo -= 0.5
       hi += 0.5
   let width = (hi - lo) / float(bins)
+  var edges = newNDArray[float](bins + 1)
+  for i in 0 .. bins: edges.buf[i] = lo + float(i) * width
+  edges.buf[bins] = hi
   var counts = newNDArray[int](bins)
   for x in a:
     if isHole(x): continue
@@ -232,10 +235,12 @@ proc histogram*[T](a: NDArray[T], bins = 10,
     var b = int(floor((v - lo) / width))
     if b >= bins: b = bins - 1        # the right edge belongs to the last bin
     if b < 0: b = 0
+    # the division rounds differently from `lo + i * width`, so a value on
+    # an edge could land a bin early or late; the edges handed back are the
+    # arbiter, as in numpy
+    if b > 0 and v < edges.buf[b]: b.dec
+    elif b < bins - 1 and v >= edges.buf[b + 1]: b.inc
     counts.buf[b] = counts.buf[b] + 1
-  var edges = newNDArray[float](bins + 1)
-  for i in 0 .. bins: edges.buf[i] = lo + float(i) * width
-  edges.buf[bins] = hi
   (counts, edges)
 
 proc cov*[T](a, b: NDArray[T], ddof = 1): float =
