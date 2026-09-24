@@ -11,6 +11,7 @@ import ./shape
 import ./creation
 import ./slicing
 import ./index
+import ./ops
 
 proc dot*[T](a, b: NDArray[T]): T =
   ## Inner product of two 1-d arrays of the same length.
@@ -46,12 +47,13 @@ proc matmul*[T](a, b: NDArray[T]): NDArray[T] =
   let bc = bm.copy()
   for i in 0 ..< n:
     for p in 0 ..< k:
+      # no skipping a zero `av`: 0 * NaN and 0 * Inf are NaN, and skipping
+      # dropped them, so the answer depended on where `a`'s zeros were
       let av = ac.buf[i * k + p]
-      if av != T(0):
-        let brow = p * m
-        let crow = i * m
-        for j in 0 ..< m:
-          res.buf[crow + j] = res.buf[crow + j] + av * bc.buf[brow + j]
+      let brow = p * m
+      let crow = i * m
+      for j in 0 ..< m:
+        res.buf[crow + j] = res.buf[crow + j] + av * bc.buf[brow + j]
   if a.ndim == 1 and b.ndim == 2: res.reshape(m)
   elif a.ndim == 2 and b.ndim == 1: res.reshape(n)
   else: res
@@ -93,12 +95,12 @@ proc norm*[T: SomeFloat](a: NDArray[T], p = 2.0): T =
   ## the family while accepting its limit would be the odd rule.
   if p == Inf:
     result = T(0)
-    for x in a: result = max(result, abs(x))
+    for x in a: result = maxKeepNaN(result, abs(x))   # not Nim's `max`
   elif p == NegInf:
     if a.size == 0:
       raise newException(ValueError, "norm: -Inf norm of an empty array")
     result = T(Inf)
-    for x in a: result = min(result, abs(x))
+    for x in a: result = minKeepNaN(result, abs(x))
   elif p == 0.0:
     result = T(0)
     for x in a:

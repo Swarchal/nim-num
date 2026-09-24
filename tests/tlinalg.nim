@@ -26,6 +26,14 @@ suite "products":
     check matmul(a, a.t).shape == @[2, 2]
     check matmul(a, a.t).toSeq() == @[5.0, 14.0, 14.0, 50.0]
 
+  test "matmul keeps a NaN or Inf that meets a zero":
+    # 0 * NaN and 0 * Inf are both NaN; skipping the zero terms of `a` lost
+    # them, so the answer depended on where the zeros were
+    let a = toNDArray(@[@[0.0, 1.0]])
+    check isNaN(matmul(a, toNDArray(@[@[NaN], @[2.0]])).item)
+    check isNaN(matmul(a, toNDArray(@[@[Inf], @[2.0]])).item)
+    check isNaN(matmul(toNDArray(@[0.0, 1.0]), toNDArray(@[NaN, 2.0])).item)
+
   test "outer, trace, diag":
     check outer(toNDArray(@[1.0, 2.0]), toNDArray(@[3.0, 4.0])).toSeq() ==
       @[3.0, 4.0, 6.0, 8.0]
@@ -48,6 +56,11 @@ suite "products":
     check abs(norm(toNDArray(@[3.0, -4.0]), -1.0) - 12.0 / 7.0) < 1e-12
     check abs(norm(toNDArray(@[3.0, -4.0]), -2.0) - 2.4) < 1e-12
     check norm(toNDArray(@[3.0, 0.0, -4.0]), -1.0) == 0.0   # 1/0 dominates
+
+  test "every norm propagates NaN, wherever it sits":
+    for p in [Inf, NegInf, 0.5, 1.0, 2.0, 3.0]:
+      check isNaN(norm(toNDArray(@[NaN, 1.0]), p))
+      check isNaN(norm(toNDArray(@[1.0, NaN]), p))
 
 suite "solving":
   let a = toNDArray(@[@[2.0, 1.0], @[1.0, 3.0]])
