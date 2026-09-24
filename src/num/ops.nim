@@ -16,10 +16,14 @@ import ./creation
 
 # ------------------------------------------------------------ the two -----
 
-template mapIt*(a: untyped, op: untyped): untyped =
+template mapIt*[T](a: NDArray[T], op: untyped): untyped =
   ## `a` with `op` applied to each element, which `op` sees as `it`. The
   ## result's element type is whatever `op` returns, so
   ## `x.mapIt(it > 0)` gives an `NDArray[bool]` with no extra machinery.
+  ##
+  ## `a` is typed for the reason `[]=`'s first parameter is: `std/sequtils`
+  ## exports a `mapIt` too, and an untyped parameter made every call to
+  ## either one ambiguous in a module that imported both.
   block:
     let src = a
     type R = typeof((
@@ -53,9 +57,10 @@ template zipIt*(a, b: untyped, op: untyped): untyped =
       i.inc
     res
 
-template applyIt*(a: var untyped, op: untyped) =
+template applyIt*[T](a: var NDArray[T], op: untyped) =
   ## In-place `mapIt`: writes through the view, so `a` may be a slice of a
-  ## larger array and only that window changes.
+  ## larger array and only that window changes. Typed for the same reason
+  ## as `mapIt` — untyped, it captured `applyIt` on a `seq` as well.
   for off in a.offsets:
     let it {.inject.} = a.buf[off]
     a.buf[off] = op
@@ -186,8 +191,6 @@ mathFn(radToDeg)
 
 proc abs*[T](a: NDArray[T]): NDArray[T] = mapIt(a, abs(it))
 proc square*[T](a: NDArray[T]): NDArray[T] = mapIt(a, it * it)
-proc sign*[T](a: NDArray[T]): NDArray[T] =
-  mapIt(a, (if it > T(0): T(1) elif it < T(0): T(-1) else: T(0)))
 proc reciprocal*[T: SomeFloat](a: NDArray[T]): NDArray[T] = mapIt(a, T(1) / it)
 
 proc pow*[T: SomeFloat](a: NDArray[T], p: T): NDArray[T] = mapIt(a, math.pow(it, p))
@@ -222,6 +225,12 @@ func maxKeepNaN*[T](x, y: T): T {.inline.} =
 proc isNaN*[T: SomeFloat](a: NDArray[T]): NDArray[bool] = mapIt(a, isHole(it))
 proc isFinite*[T: SomeFloat](a: NDArray[T]): NDArray[bool] =
   mapIt(a, not isHole(it) and it != Inf and it != -Inf)
+
+proc sign*[T](a: NDArray[T]): NDArray[T] =
+  ## A hole has no sign, so NaN stays NaN — it compares false both ways and
+  ## would otherwise fall through to 0.
+  mapIt(a, (if isHole(it): it elif it > T(0): T(1) elif it < T(0): T(-1)
+            else: T(0)))
 
 ## `maximum`/`minimum` are the *elementwise* pair, as in numpy; `max`/`min`
 ## in `reductions` are the folds. Both orders of the scalar form are here,

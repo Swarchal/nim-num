@@ -1,4 +1,4 @@
-import std/[unittest, math]
+import std/[unittest, math, sequtils]
 import num
 
 suite "arithmetic":
@@ -83,6 +83,9 @@ suite "math":
     check abs(toNDArray(@[-1, 2])).toSeq() == @[1, 2]
     check square(toNDArray(@[2, 3])).toSeq() == @[4, 9]
     check sign(toNDArray(@[-2.0, 0.0, 5.0])).toSeq() == @[-1.0, 0.0, 1.0]
+    let s = sign(toNDArray(@[NaN, -1.0]))    # a hole has no sign
+    check isNaN(s[0])
+    check s[1] == -1.0
     check allclose(pow(toNDArray(@[2.0, 3.0]), 2.0), toNDArray(@[4.0, 9.0]))
 
   test "maximum is elementwise, max is the fold":
@@ -135,3 +138,15 @@ suite "where and mapping":
 
   test "zipIt sees x and y":
     check zipIt(arange(3), arange(3), x * y).toSeq() == @[0, 1, 4]
+
+  test "mapIt and applyIt leave std/sequtils' own alone":
+    # this file imports std/sequtils: an untyped first parameter made both
+    # calls ambiguous for a seq and captured `applyIt` on one outright
+    check @[1, 2, 3].mapIt(it * 2) == @[2, 4, 6]
+    var q = @[1, 2, 3]
+    q.applyIt(it + 1)
+    check q == @[2, 3, 4]
+    check arange(3).mapIt(it * 2).toSeq() == @[0, 2, 4]
+    var b = arange(3)
+    b.applyIt(it + 1)
+    check b.toSeq() == @[1, 2, 3]
