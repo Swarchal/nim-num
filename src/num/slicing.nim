@@ -98,9 +98,15 @@ func applySel(s: Sel, n, stride: int): tuple[len, stride, offset: int, drop: boo
   of selSpan:
     let a = resolve(s.first, s.firstFromEnd, n)
     let b = resolve(s.last, s.lastFromEnd, n)
-    # `a ..< a` is the empty slice at any `a`, following seq[T]; anything
-    # else running past either end is an error rather than a silent clamp.
+    # `a ..< a` is the empty slice at any position from 0 to `n` — the end
+    # counts, as `s[s.len ..< s.len]` does. Anything else running past either
+    # end is an error rather than a silent clamp, an empty slice included:
+    # seq[T] accepts `s[100 ..< 100]`, but a start that far out is a
+    # miscomputed index, and answering with an empty view hides it.
     if s.step > 0 and b == a - 1:
+      if a < 0 or a > n:
+        raise newException(ValueError,
+          "slice " & $s.first & ".." & $s.last & " out of range for an axis of length " & $n)
       (0, s.step * stride, 0, false)
     else:
       if a < 0 or a >= n or b < 0 or b >= n:

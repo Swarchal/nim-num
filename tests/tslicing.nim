@@ -26,6 +26,12 @@ suite "selection":
     check a[All, span(0, 3, 2)].toSeq() == @[0, 2, 4, 6, 8, 10]
     check a[0, span(3, 0, -1)].toSeq() == @[3, 2, 1, 0]
     check a[0, 1..0].size == 0                # `a ..< a` is empty
+    check a[0, 0 ..< 0].size == 0
+    check a[0, 4 ..< 4].size == 0             # at the end is still in range
+    expect ValueError: discard a[0, 5 ..< 5]
+    expect ValueError: discard a[0, 100 ..< 100]
+    expect ValueError: discard a[0, span(5, 4)]
+    expect ValueError: discard a[0, -1 ..< -1]
     expect ValueError: discard a[0, 1..9]
     expect ValueError: discard span(0, 3, 0)
 
