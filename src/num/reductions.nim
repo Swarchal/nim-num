@@ -268,20 +268,20 @@ proc std*[T](a: NDArray[T], axis: int, ddof = 0, keepDims = false): NDArray[floa
 proc nanCount*[T: SomeFloat](a: NDArray[T]): int =
   ## How many elements are not NaN — how much of a result is real.
   for x in a:
-    if not isNaN(x): result.inc
+    if not isHole(x): result.inc
 
 proc nanCount*[T: SomeFloat](a: NDArray[T], axis: int, keepDims = false): NDArray[int] =
-  axisFold(a, axis, keepDims, 0, (if isNaN(it): acc else: acc + 1))
+  axisFold(a, axis, keepDims, 0, (if isHole(it): acc else: acc + 1))
 
 proc nanSum*[T: SomeFloat](a: NDArray[T]): T =
   ## Sum of the non-NaN elements. All-NaN gives 0, the identity — as with
   ## `sum` of an empty array, and as numpy gives.
   result = T(0)
   for x in a:
-    if not isNaN(x): result = result + x
+    if not isHole(x): result = result + x
 
 proc nanSum*[T: SomeFloat](a: NDArray[T], axis: int, keepDims = false): NDArray[T] =
-  axisFold(a, axis, keepDims, T(0), (if isNaN(it): acc else: acc + it))
+  axisFold(a, axis, keepDims, T(0), (if isHole(it): acc else: acc + it))
 
 func checkAnyValid(n: int, op: string) =
   if n == 0:
@@ -291,7 +291,7 @@ proc nanMin*[T: SomeFloat](a: NDArray[T]): T =
   checkAnyValid(a.nanCount, "nanMin")
   var first = true
   for x in a:
-    if not isNaN(x) and (first or x < result):
+    if not isHole(x) and (first or x < result):
       result = x
       first = false
 
@@ -299,7 +299,7 @@ proc nanMax*[T: SomeFloat](a: NDArray[T]): T =
   checkAnyValid(a.nanCount, "nanMax")
   var first = true
   for x in a:
-    if not isNaN(x) and (first or x > result):
+    if not isHole(x) and (first or x > result):
       result = x
       first = false
 
@@ -310,9 +310,9 @@ proc nanExtreme[T: SomeFloat](a: NDArray[T], axis: int, keepDims: bool,
   ## indistinguishable from an all-NaN slice otherwise.
   result =
     if wantMax: axisFold(a, axis, keepDims, T(NegInf),
-                         (if isNaN(it): acc else: system.max(acc, it)))
+                         (if isHole(it): acc else: system.max(acc, it)))
     else: axisFold(a, axis, keepDims, T(Inf),
-                   (if isNaN(it): acc else: system.min(acc, it)))
+                   (if isHole(it): acc else: system.min(acc, it)))
   let counts = nanCount(a, axis, keepDims)
   for i in 0 ..< result.buf[].len:
     if counts.buf[i] == 0: result.buf[i] = T(NaN)
@@ -328,12 +328,12 @@ proc nanMean*[T: SomeFloat](a: NDArray[T]): float =
   checkAnyValid(n, "nanMean")
   var s = 0.0
   for x in a:
-    if not isNaN(x): s += float(x)
+    if not isHole(x): s += float(x)
   s / float(n)
 
 proc nanMean*[T: SomeFloat](a: NDArray[T], axis: int, keepDims = false): NDArray[float] =
   let totals = axisFold(a, axis, keepDims, 0.0,
-                        (if isNaN(it): acc else: acc + float(it)))
+                        (if isHole(it): acc else: acc + float(it)))
   let counts = nanCount(a, axis, keepDims)
   result = totals
   for i in 0 ..< result.buf[].len:
@@ -349,7 +349,7 @@ proc nanVariance*[T: SomeFloat](a: NDArray[T], ddof = 0): float =
   let m = nanMean(a)
   var s = 0.0
   for x in a:
-    if not isNaN(x):
+    if not isHole(x):
       let d = float(x) - m
       s += d * d
   s / float(n - ddof)
@@ -367,7 +367,7 @@ proc nanVariance*[T: SomeFloat](a: NDArray[T], axis: int, ddof = 0,
   var i = 0
   for oa, ob in offsets2(a, mb):
     let x = a.buf[oa]
-    sq.buf[i] = if isNaN(x): NaN else: (float(x) - mb.buf[ob]) * (float(x) - mb.buf[ob])
+    sq.buf[i] = if isHole(x): NaN else: (float(x) - mb.buf[ob]) * (float(x) - mb.buf[ob])
     i.inc
   result = nanSum(sq, axis, keepDims)
   let counts = nanCount(a, axis, keepDims)
