@@ -89,6 +89,13 @@ suite "solving":
                                      toNDArray(@[1.0, 2.0]))
     expect ValueError: discard solve(zeros[float](2, 3), toNDArray(@[1.0, 2.0]))
 
+  test "a NaN under a zero pivot propagates instead of reading as singular":
+    let m = toNDArray(@[@[0.0, 1.0], @[NaN, 1.0]])
+    check isNaN(det(m))
+    check isNaN(det(toNDArray(@[@[NaN, 1.0], @[0.0, 1.0]])))
+    check all(isNaN(solve(m, toNDArray(@[1.0, 2.0]))))
+    check all(isNaN(inv(m)))
+
   test "a non-square input raises ValueError, a 0-d one included":
     # `inv` used to read shape[0] before the shape was checked, so a 0-d
     # array raised IndexDefect, which `except ValueError` does not catch.

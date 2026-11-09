@@ -141,12 +141,17 @@ proc luDecompose(a: NDArray[float]): LU =
   result.perm = newSeq[int](n)
   for i in 0 ..< n: result.perm[i] = i
   for k in 0 ..< n:
-    # partial pivoting: the largest available pivot, for numerical stability
+    # partial pivoting: the largest available pivot, for numerical stability.
+    # A hole wins the search, as it does in `max`: `v > best` is false for
+    # NaN, so a NaN under a zero diagonal was never picked, the column read
+    # as all zeros, and a matrix holding a hole was reported singular — `det`
+    # answered 0.0 — instead of the NaN reaching the answer.
     var piv = k
     var best = abs(result.m[k, k])
     for i in k + 1 ..< n:
+      if isHole(best): break
       let v = abs(result.m[i, k])
-      if v > best:
+      if isHole(v) or v > best:
         best = v
         piv = i
     if best == 0.0:
