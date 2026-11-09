@@ -141,10 +141,9 @@ proc unique*[T](a: NDArray[T]): NDArray[T] =
   let xs = sortedArray(a).toSeq()
   var out0: seq[T]
   for i, x in xs:
-    when T is SomeFloat:
-      if x != x:
-        if i == 0 or xs[i - 1] == xs[i - 1]: out0.add(x)   # the first NaN only
-        continue
+    if isHole(x):
+      if i == 0 or not isHole(xs[i - 1]): out0.add(x)   # the first NaN only
+      continue
     if i == 0 or x != xs[i - 1]: out0.add(x)
   initNDArray[T](@[out0.len], out0)
 

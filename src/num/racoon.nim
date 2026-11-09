@@ -38,6 +38,7 @@ import racoon/value as rvalue
 import racoon/dataframe as rdataframe
 import ./core
 import ./index
+import ./ops
 
 proc toArray*(c: rvalue.Column): NDArray[float] =
   ## A numeric racoon column as a 1-d float array. Int columns widen, which
@@ -123,7 +124,7 @@ proc toColumn*(name: string, a: NDArray[float],
     var valid = newSeq[bool](a.size)
     var i = 0
     for x in a:
-      valid[i] = x == x
+      valid[i] = not isHole(x)
       i.inc
     result.valid = valid
 
