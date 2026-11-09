@@ -151,18 +151,6 @@ proc `or`*(a, b: NDArray[bool]): NDArray[bool] = zipIt(a, b, x or y)
 proc `xor`*(a, b: NDArray[bool]): NDArray[bool] = zipIt(a, b, x xor y)
 proc `not`*(a: NDArray[bool]): NDArray[bool] = mapIt(a, not it)
 
-proc allclose*[T: SomeFloat](a, b: NDArray[T], rtol = 1e-5, atol = 1e-8): bool =
-  ## Elementwise closeness with numpy's tolerance rule
-  ## (`|a-b| <= atol + rtol*|b|`), for the comparisons exact equality is the
-  ## wrong test for. NaN is never close to anything.
-  let (xs, ys) = broadcast2(a, b)
-  for oa, ob in offsets2(xs, ys):
-    let u = xs.buf[oa]
-    let v = ys.buf[ob]
-    if u != u or v != v: return false
-    if abs(u - v) > atol + rtol * abs(v): return false
-  true
-
 # --------------------------------------------------------------- math -----
 
 template mathFn(name: untyped) =
@@ -225,6 +213,23 @@ func maxKeepNaN*[T](x, y: T): T {.inline.} =
 proc isNaN*[T: SomeFloat](a: NDArray[T]): NDArray[bool] = mapIt(a, isHole(it))
 proc isFinite*[T: SomeFloat](a: NDArray[T]): NDArray[bool] =
   mapIt(a, not isHole(it) and it != Inf and it != -Inf)
+
+proc allclose*[T: SomeFloat](a, b: NDArray[T], rtol = 1e-5, atol = 1e-8): bool =
+  ## Elementwise closeness with numpy's tolerance rule
+  ## (`|a-b| <= atol + rtol*|b|`), for the comparisons exact equality is the
+  ## wrong test for. NaN is never close to anything, and an infinity is
+  ## close only to itself: the tolerance rule cannot say so on its own,
+  ## since with an infinite operand both sides are `Inf` and `Inf > Inf` is
+  ## false, which made `Inf` close to every value.
+  let (xs, ys) = broadcast2(a, b)
+  for oa, ob in offsets2(xs, ys):
+    let u = xs.buf[oa]
+    let v = ys.buf[ob]
+    if isHole(u) or isHole(v): return false
+    if u == v: continue
+    if abs(u) == Inf or abs(v) == Inf: return false
+    if abs(u - v) > atol + rtol * abs(v): return false
+  true
 
 proc sign*[T](a: NDArray[T]): NDArray[T] =
   ## A hole has no sign, so NaN stays NaN — it compares false both ways and

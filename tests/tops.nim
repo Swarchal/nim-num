@@ -76,6 +76,13 @@ suite "comparisons":
     check not allclose(a, toNDArray(@[0.4, 1.0]))
     check not allclose(toNDArray(@[NaN]), toNDArray(@[NaN]))
 
+  test "allclose: an infinity is close only to itself":
+    check allclose(toNDArray(@[Inf, -Inf]), toNDArray(@[Inf, -Inf]))
+    check not allclose(toNDArray(@[1.0]), toNDArray(@[Inf]))
+    check not allclose(toNDArray(@[Inf]), toNDArray(@[1.0]))
+    check not allclose(toNDArray(@[Inf]), toNDArray(@[-Inf]))
+    check not allclose(toNDArray(@[1e308]), toNDArray(@[Inf]))
+
 suite "math":
   test "ufuncs":
     check allclose(sqrt(toNDArray(@[4.0, 9.0])), toNDArray(@[2.0, 3.0]))
