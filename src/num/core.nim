@@ -141,20 +141,29 @@ proc asContiguous*[T](a: NDArray[T]): NDArray[T] =
 
 # ------------------------------------------------------------- indexing ----
 
+func resolveIndex*(i, n: int, axis = -1): int =
+  ## The one place a plain integer index becomes a position on an axis of
+  ## length `n`: a negative one counts from the end, as in numpy, and
+  ## anything outside the axis raises. Element access, selection and `take`
+  ## all ask, so `a[-1, 0]` and `a[-1, All]` cannot disagree about which row
+  ## `-1` is. `axis`, when given, only names the axis in the message.
+  result = if i < 0: i + n else: i
+  if result < 0 or result >= n:
+    let where = if axis >= 0: "axis " & $axis else: "an axis"
+    raise newException(ValueError,
+      "index " & $i & " out of range for " & where & " of length " & $n)
+
 func flatOffset*[T](a: NDArray[T], idx: openArray[int]): int =
   ## Buffer position of one element, resolving negative indices from the end
-  ## the way numpy does. The single bounds check for scalar access.
+  ## the way numpy does (through `resolveIndex`). The single bounds check for
+  ## scalar access.
   if idx.len != a.shape.len:
     raise newException(ValueError,
       $idx.len & " indices for a " & $a.shape.len & "-d array: an all-integer " &
       "index must name every axis. Use `All` for the rest (a[1, All]) to get a view.")
   result = a.offset
   for ax, i in idx:
-    let j = if i < 0: i + a.shape[ax] else: i
-    if j < 0 or j >= a.shape[ax]:
-      raise newException(ValueError,
-        "index " & $i & " out of range for axis " & $ax & " of length " & $a.shape[ax])
-    result += j * a.strides[ax]
+    result += resolveIndex(i, a.shape[ax], ax) * a.strides[ax]
 
 func elemAt*[T](a: NDArray[T], idx: varargs[int]): T =
   ## One element. Users reach this through `[]` (see `index.nim`), which

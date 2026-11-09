@@ -45,6 +45,8 @@ suite "selection":
     check a[0, 0 .. -1].size == 0             # spans keep `a ..< a`, not "from the end"
     expect ValueError: discard a[-4, All]
     expect ValueError: discard a.row(-4)
+    expect ValueError: discard a[^0, All]     # ^0 names no position
+    expect ValueError: discard a[^4, All]     # one past the start, not a wrap
     var b = arange(6).reshape(2, 3)
     b[-1, All] = 0
     check b.toSeq() == @[0, 1, 2, 0, 0, 0]

@@ -110,11 +110,11 @@ proc quantiles*[T](a: NDArray[T], qs: openArray[float]): NDArray[float] =
   ## any work is done, so a bad one fails the call rather than part of it.
   for q in qs: checkQ(q, "quantile")
   if a.size == 0: raise newException(ValueError, "quantile of an empty array")
+  var xs = a.toSeq()
+  xs.sort(nanLast[T])
+  # NaN sorts last, so the sorted copy answers `hasNaN` without another scan
+  if isHole(xs[^1]): return full([qs.len], NaN)   # as `median`, for the same reason
   result = newNDArray[float](qs.len)
-  if hasNaN(a):                     # as `median`, and for the same reason
-    for i in 0 ..< qs.len: result.buf[i] = NaN
-    return
-  let xs = sortedArray(a).toSeq()
   for i, q in qs: result.buf[i] = interpolate(xs, q)
 
 proc quantile*[T](a: NDArray[T], q: float): float =
@@ -128,7 +128,7 @@ proc iqr*[T](a: NDArray[T]): float =
   let qs = quantiles(a, [0.25, 0.75])
   qs.buf[1] - qs.buf[0]
 
-# `quantiles`, `percentile` and `iqr` inherit the propagation from `quantile`
+# `quantile`, `percentile` and `iqr` inherit the propagation from `quantiles`
 # rather than restating it.
 
 proc nanMedian*[T: SomeFloat](a: NDArray[T]): float =
@@ -142,10 +142,11 @@ proc nanMedian*[T: SomeFloat](a: NDArray[T]): float =
 proc nanQuantile*[T: SomeFloat](a: NDArray[T], q: float): float =
   ## `quantile` over the values that are not NaN.
   checkQ(q, "nanQuantile")
-  let xs = withoutNaN(a)
+  var xs = withoutNaN(a)
   if xs.len == 0:
     raise newException(ValueError, "nanQuantile of an array with no values in it")
-  quantile(initNDArray[T](@[xs.len], xs), q)
+  xs.sort(nanLast[T])
+  interpolate(xs, q)
 
 proc unique*[T](a: NDArray[T]): NDArray[T] =
   ## The distinct values, in sorted order. Distinctness is `==` on the

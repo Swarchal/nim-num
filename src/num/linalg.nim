@@ -126,21 +126,20 @@ type LU = object
   ##
   ## `m` is a plain row-major `seq`, not an `NDArray`: the O(n³) loops below
   ## index it directly instead of paying `[]`'s bounds check and negative-
-  ## index resolution on every access. Entry `(i, j)` is `m[i * n + j]`.
+  ## index resolution on every access. Each proc reads it through a local
+  ## `M(i, j)`, so the layout is spelled once per proc.
   m: seq[float]
   perm: seq[int]
   swaps: int
   singular: bool
 
-func checkSquare(a: NDArray[float]) =
-  ## The one statement of what the LU readings accept. It has to run before
-  ## anything reads `a.shape[0]`, or a 0-d array raises `IndexDefect`.
+proc luDecompose(a: NDArray[float]): LU =
+  ## Checks the shape before anything reads it, so every LU reading — `inv`
+  ## included — rejects a 0-d or non-square input with a `ValueError`.
   if a.ndim != 2 or a.shape[0] != a.shape[1]:
     raise newException(ValueError, "expected a square matrix, got " & $a.shape)
-
-proc luDecompose(a: NDArray[float]): LU =
-  checkSquare(a)
   let n = a.shape[0]
+  template M(i, j: int): untyped = result.m[i * n + j]
   result.m = a.toSeq()
   result.perm = newSeq[int](n)
   for i in 0 ..< n: result.perm[i] = i
@@ -151,10 +150,10 @@ proc luDecompose(a: NDArray[float]): LU =
     # as all zeros, and a matrix holding a hole was reported singular — `det`
     # answered 0.0 — instead of the NaN reaching the answer.
     var piv = k
-    var best = abs(result.m[k * n + k])
+    var best = abs(M(k, k))
     for i in k + 1 ..< n:
       if isHole(best): break
-      let v = abs(result.m[i * n + k])
+      let v = abs(M(i, k))
       if isHole(v) or v > best:
         best = v
         piv = i
@@ -163,17 +162,17 @@ proc luDecompose(a: NDArray[float]): LU =
       continue
     if piv != k:
       for j in 0 ..< n:
-        let tmp = result.m[k * n + j]
-        result.m[k * n + j] = result.m[piv * n + j]
-        result.m[piv * n + j] = tmp
+        let tmp = M(k, j)
+        M(k, j) = M(piv, j)
+        M(piv, j) = tmp
       swap(result.perm[k], result.perm[piv])
       result.swaps.inc
-    let pivot = result.m[k * n + k]
+    let pivot = M(k, k)
     for i in k + 1 ..< n:
-      let f = result.m[i * n + k] / pivot
-      result.m[i * n + k] = f
+      let f = M(i, k) / pivot
+      M(i, k) = f
       for j in k + 1 ..< n:
-        result.m[i * n + j] = result.m[i * n + j] - f * result.m[k * n + j]
+        M(i, j) = M(i, j) - f * M(k, j)
 
 proc det*(a: NDArray[float]): float =
   ## Determinant, from the LU factorisation: the product of the pivots, with
@@ -181,49 +180,60 @@ proc det*(a: NDArray[float]): float =
   let lu = luDecompose(a)
   if lu.singular: return 0.0
   result = if lu.swaps mod 2 == 0: 1.0 else: -1.0
-  let n = a.shape[0]
-  for i in 0 ..< n: result *= lu.m[i * n + i]
+  let n = lu.perm.len
+  template M(i, j: int): untyped = lu.m[i * n + j]
+  for i in 0 ..< n: result *= M(i, i)
 
 proc luSolveVec(lu: LU, b: seq[float]): seq[float] =
   let n = lu.perm.len
+  template M(i, j: int): untyped = lu.m[i * n + j]
   var y = newSeq[float](n)
   for i in 0 ..< n:
     var s = b[lu.perm[i]]
-    for j in 0 ..< i: s -= lu.m[i * n + j] * y[j]
+    for j in 0 ..< i: s -= M(i, j) * y[j]
     y[i] = s
   result = newSeq[float](n)
   for i in countdown(n - 1, 0):
     var s = y[i]
-    for j in i + 1 ..< n: s -= lu.m[i * n + j] * result[j]
-    result[i] = s / lu.m[i * n + i]
+    for j in i + 1 ..< n: s -= M(i, j) * result[j]
+    result[i] = s / M(i, i)
 
-proc solve*(a: NDArray[float], b: NDArray[float]): NDArray[float] =
-  ## Solve `A x = b` for a square `A`. `b` may be a vector or a matrix of
-  ## several right-hand sides; the result has `b`'s shape.
-  let lu = luDecompose(a)
-  if lu.singular:
-    raise newException(ValueError, "solve: matrix is singular")
-  let n = a.shape[0]
+proc luNonSingular(a: NDArray[float], who: string): LU =
+  result = luDecompose(a)
+  if result.singular:
+    raise newException(ValueError, who & ": matrix is singular")
+
+proc luSolve(lu: LU, b: NDArray[float], who: string): NDArray[float] =
+  ## The right-hand sides `b` — a vector, or the columns of a matrix —
+  ## solved against one factorisation. `solve` and `inv` are both this; the
+  ## result has `b`'s shape.
+  let n = lu.perm.len
   if b.ndim == 1:
     if b.size != n:
       raise newException(ValueError,
-        "solve: A is " & $a.shape & " but b has length " & $b.size)
+        who & ": A is " & $(@[n, n]) & " but b has length " & $b.size)
     return initNDArray[float](@[n], luSolveVec(lu, b.toSeq()))
   if b.ndim != 2 or b.shape[0] != n:
     raise newException(ValueError,
-      "solve: A is " & $a.shape & " but B is " & $b.shape)
+      who & ": A is " & $(@[n, n]) & " but B is " & $b.shape)
   let m = b.shape[1]
   result = newNDArray[float](n, m)
   for j in 0 ..< m:
     let x = luSolveVec(lu, b.select(All, j).toSeq())
     for i in 0 ..< n: result.buf[i * m + j] = x[i]
 
+proc solve*(a: NDArray[float], b: NDArray[float]): NDArray[float] =
+  ## Solve `A x = b` for a square `A`. `b` may be a vector or a matrix of
+  ## several right-hand sides; the result has `b`'s shape.
+  luSolve(luNonSingular(a, "solve"), b, "solve")
+
 proc inv*(a: NDArray[float]): NDArray[float] =
   ## Matrix inverse, as the solve against the identity. Prefer `solve` when
   ## the inverse is only on its way to a product — it is both faster and
-  ## better conditioned.
-  checkSquare(a)
-  solve(a, eye[float](a.shape[0]))
+  ## better conditioned. The identity's size comes from the factorisation,
+  ## so nothing here reads `a.shape` before `luDecompose` has checked it.
+  let lu = luNonSingular(a, "inv")
+  luSolve(lu, eye[float](lu.perm.len), "inv")
 
 # ------------------------------------------------- QR-based solvers --------
 
@@ -233,8 +243,8 @@ type QR = object
   ## their leading entry is an implicit 1, with their factors in `tau`.
   ## `Q` is never formed — `lstsq` only ever needs to apply it.
   ##
-  ## `m` is a plain row-major `seq`, for the same reason as `LU`'s: entry
-  ## `(i, j)` is `m[i * cols + j]`.
+  ## `m` is a plain row-major `seq`, read through `M(i, j)`, for the same
+  ## reason as `LU`'s.
   m: seq[float]
   tau: seq[float]
   rankDeficient: bool
@@ -245,55 +255,57 @@ proc qrDecompose(a: NDArray[float]): QR =
   ## throws away half the available precision before the solve begins.
   let rows = a.shape[0]
   let cols = a.shape[1]
+  template M(i, j: int): untyped = result.m[i * cols + j]
   result.m = a.toSeq()
   result.tau = newSeq[float](cols)
   for k in 0 ..< cols:
     # the reflector that maps column k, below the diagonal, onto e1
     var nrm = 0.0
-    for i in k ..< rows: nrm += result.m[i * cols + k] * result.m[i * cols + k]
+    for i in k ..< rows: nrm += M(i, k) * M(i, k)
     nrm = sqrt(nrm)
     if nrm == 0.0: continue        # a zero column: the pivot scan below catches it
-    let xk = result.m[k * cols + k]
+    let xk = M(k, k)
     # the sign that moves xk away from zero: subtracting nearly equal
     # numbers here is the one cancellation this algorithm could suffer
     let beta = if xk >= 0.0: -nrm else: nrm
     result.tau[k] = (beta - xk) / beta
     let denom = xk - beta
-    for i in k + 1 ..< rows: result.m[i * cols + k] = result.m[i * cols + k] / denom
-    result.m[k * cols + k] = beta
+    for i in k + 1 ..< rows: M(i, k) = M(i, k) / denom
+    M(k, k) = beta
     for j in k + 1 ..< cols:
-      var s = result.m[k * cols + j]
-      for i in k + 1 ..< rows: s += result.m[i * cols + k] * result.m[i * cols + j]
+      var s = M(k, j)
+      for i in k + 1 ..< rows: s += M(i, k) * M(i, j)
       s *= result.tau[k]
-      result.m[k * cols + j] = result.m[k * cols + j] - s
+      M(k, j) = M(k, j) - s
       for i in k + 1 ..< rows:
-        result.m[i * cols + j] = result.m[i * cols + j] - s * result.m[i * cols + k]
+        M(i, j) = M(i, j) - s * M(i, k)
   # Rank comes from `R`'s diagonal, but a dependent column leaves rounding
   # noise there rather than an exact zero — two equal columns give a pivot
   # of 1e-16, not 0 — so the cutoff is relative to the largest pivot, as
   # LAPACK's rcond is. Dividing by the noise instead would return a huge
   # answer with no digits in it.
   var maxPivot = 0.0
-  for k in 0 ..< cols: maxPivot = max(maxPivot, abs(result.m[k * cols + k]))
+  for k in 0 ..< cols: maxPivot = max(maxPivot, abs(M(k, k)))
   let tol = float(max(rows, cols)) * epsilon(float) * maxPivot
   for k in 0 ..< cols:
-    if abs(result.m[k * cols + k]) <= tol: result.rankDeficient = true
+    if abs(M(k, k)) <= tol: result.rankDeficient = true
 
 proc qrSolveVec(qr: QR, rows, cols: int, b: seq[float]): seq[float] =
   ## `Qᵀb` by replaying the reflectors, then back-substitution through `R`.
+  template M(i, j: int): untyped = qr.m[i * cols + j]
   var y = b
   for k in 0 ..< cols:
     if qr.tau[k] == 0.0: continue
     var s = y[k]
-    for i in k + 1 ..< rows: s += qr.m[i * cols + k] * y[i]
+    for i in k + 1 ..< rows: s += M(i, k) * y[i]
     s *= qr.tau[k]
     y[k] = y[k] - s
-    for i in k + 1 ..< rows: y[i] = y[i] - s * qr.m[i * cols + k]
+    for i in k + 1 ..< rows: y[i] = y[i] - s * M(i, k)
   result = newSeq[float](cols)
   for i in countdown(cols - 1, 0):
     var s = y[i]
-    for j in i + 1 ..< cols: s -= qr.m[i * cols + j] * result[j]
-    result[i] = s / qr.m[i * cols + i]
+    for j in i + 1 ..< cols: s -= M(i, j) * result[j]
+    result[i] = s / M(i, i)
 
 proc lstsq*(a, b: NDArray[float]): NDArray[float] =
   ## Least-squares solution of an overdetermined `A x = b`, by Householder

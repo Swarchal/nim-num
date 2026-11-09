@@ -72,9 +72,11 @@ converter toSel*(s: HSlice[BackwardsIndex, BackwardsIndex]): Sel =
       firstFromEnd: true, lastFromEnd: true)
 
 func resolve(pos: int, fromEnd: bool, n: int): int =
-  ## The one place `^k` and a plain index become a position. Nim resolves
-  ## `^k` inside a template private to `system`, so a container that is not
-  ## `seq`/`array` has to restate it — racoon does the same.
+  ## Where a span's end lands. Nim resolves `^k` inside a template private
+  ## to `system`, so a container that is not `seq`/`array` has to restate
+  ## it — racoon does the same. A plain negative end is *not* counted from
+  ## the end here, unlike an index (`resolveIndex`): `0 .. -1` is the empty
+  ## slice, not the whole axis.
   if fromEnd: n - pos else: pos
 
 func applySel(s: Sel, n, stride: int): tuple[len, stride, offset: int, drop: bool] =
@@ -85,15 +87,13 @@ func applySel(s: Sel, n, stride: int): tuple[len, stride, offset: int, drop: boo
     # `Rest` has been expanded into `All`s by `expandRest` before this runs
     (n, stride, 0, false)
   of selIndex:
-    # A negative plain index counts from the end, as it does in `flatOffset`
-    # and `take`, so `a[-1, All]` is the row `a[-1, 0]` reads from. Spans do
-    # not get this: `0 .. -1` is the empty slice, not the whole axis.
-    let i =
-      if not s.idxFromEnd and s.idx < 0: s.idx + n
-      else: resolve(s.idx, s.idxFromEnd, n)
-    if i < 0 or i >= n:
+    # `^k` is `-k` on the way into `resolveIndex`, except that `^0` and a
+    # negative `k` name no position from the end at all — passed through as
+    # `-k` they would read as the first element or wrap around.
+    if s.idxFromEnd and s.idx <= 0:
       raise newException(ValueError,
-        "index " & $s.idx & " out of range for an axis of length " & $n)
+        "index ^" & $s.idx & " out of range for an axis of length " & $n)
+    let i = resolveIndex(if s.idxFromEnd: -s.idx else: s.idx, n)
     (0, 0, i * stride, true)
   of selSpan:
     let a = resolve(s.first, s.firstFromEnd, n)
@@ -103,15 +103,13 @@ func applySel(s: Sel, n, stride: int): tuple[len, stride, offset: int, drop: boo
     # end is an error rather than a silent clamp, an empty slice included:
     # seq[T] accepts `s[100 ..< 100]`, but a start that far out is a
     # miscomputed index, and answering with an empty view hides it.
-    if s.step > 0 and b == a - 1:
-      if a < 0 or a > n:
-        raise newException(ValueError,
-          "slice " & $s.first & ".." & $s.last & " out of range for an axis of length " & $n)
+    let empty = s.step > 0 and b == a - 1
+    if a < 0 or (if empty: a > n else: a >= n or b < 0 or b >= n):
+      raise newException(ValueError,
+        "slice " & $s.first & ".." & $s.last & " out of range for an axis of length " & $n)
+    if empty:
       (0, s.step * stride, 0, false)
     else:
-      if a < 0 or a >= n or b < 0 or b >= n:
-        raise newException(ValueError,
-          "slice " & $s.first & ".." & $s.last & " out of range for an axis of length " & $n)
       let count = if s.step > 0:
                     (if b < a: 0 else: (b - a) div s.step + 1)
                   else:
@@ -179,10 +177,7 @@ proc take*[T](a: NDArray[T], indices: openArray[int], axis = 0): NDArray[T] =
   var sels = newSeq[Sel](a.ndim)
   for i in 0 ..< a.ndim: sels[i] = All
   for k, i in indices:
-    let j = if i < 0: i + a.shape[ax] else: i
-    if j < 0 or j >= a.shape[ax]:
-      raise newException(ValueError,
-        "index " & $i & " out of range for axis " & $ax & " of length " & $a.shape[ax])
+    let j = resolveIndex(i, a.shape[ax], ax)
     sels[ax] = span(j, j)
     var dstSel = sels
     dstSel[ax] = span(k, k)
