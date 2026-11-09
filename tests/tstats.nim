@@ -29,6 +29,19 @@ suite "order statistics":
     check iqr(a) == 1.5
     expect ValueError: discard quantile(a, 1.5)
 
+  test "quantiles reads every q from one sort and agrees with quantile":
+    let a = toNDArray(@[3.0, 0.0, 2.0, 1.0, 7.0])
+    let qs = [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
+    let got = quantiles(a, qs)
+    check got.shape == @[qs.len]
+    for i in 0 ..< qs.len: check got[i] == quantile(a, qs[i])
+    check quantiles(toNDArray(@[1, 5, 2]), [0.5])[0] == 2.0
+    check quantiles(a, newSeq[float]()).size == 0
+    expect ValueError: discard quantiles(a, [0.5, 1.5])   # one bad q fails the call
+    expect ValueError: discard quantiles(a, [0.5, NaN])
+    expect ValueError: discard quantiles(zeros[float](0), [0.5])
+    expect ValueError: discard iqr(zeros[float](0))
+
   test "a NaN q is rejected, not used as an index":
     let a = toNDArray(@[1.0, 2.0, 3.0])
     expect ValueError: discard quantile(a, NaN)

@@ -90,27 +90,43 @@ proc median*[T](a: NDArray[T]): float =
   if n mod 2 == 1: float(xs[n div 2])
   else: (float(xs[n div 2 - 1]) + float(xs[n div 2])) / 2.0
 
-proc quantile*[T](a: NDArray[T], q: float): float =
-  ## Linear interpolation between the two neighbouring order statistics —
-  ## numpy's default `method="linear"`, so `quantile(x, 0.5) == median(x)`.
-  if a.size == 0: raise newException(ValueError, "quantile of an empty array")
+func checkQ(q: float, who: string) =
   if not (q >= 0.0 and q <= 1.0):   # written so that a NaN q fails it too
-    raise newException(ValueError, "quantile: q must be in 0..1, got " & $q)
-  if hasNaN(a): return NaN          # as `median`, and for the same reason
-  let xs = sortedArray(a).toSeq()
+    raise newException(ValueError, who & ": q must be in 0..1, got " & $q)
+
+func interpolate[T](xs: seq[T], q: float): float =
+  ## Linear interpolation between the two order statistics either side of
+  ## `q` in an already sorted, non-empty, hole-free `xs`. Split out so that
+  ## `quantiles` and `iqr` sort once and read every `q` from the same seq,
+  ## rather than scanning and sorting the whole array again for each.
   let pos = q * float(xs.len - 1)
   let lo = int(floor(pos))
   let hi = int(ceil(pos))
   if lo == hi: float(xs[lo])
   else: float(xs[lo]) + (pos - float(lo)) * (float(xs[hi]) - float(xs[lo]))
 
+proc quantiles*[T](a: NDArray[T], qs: openArray[float]): NDArray[float] =
+  ## `quantile` at each of `qs`, from one sort. Every `q` is checked before
+  ## any work is done, so a bad one fails the call rather than part of it.
+  for q in qs: checkQ(q, "quantile")
+  if a.size == 0: raise newException(ValueError, "quantile of an empty array")
+  result = newNDArray[float](qs.len)
+  if hasNaN(a):                     # as `median`, and for the same reason
+    for i in 0 ..< qs.len: result.buf[i] = NaN
+    return
+  let xs = sortedArray(a).toSeq()
+  for i, q in qs: result.buf[i] = interpolate(xs, q)
+
+proc quantile*[T](a: NDArray[T], q: float): float =
+  ## Linear interpolation between the two neighbouring order statistics —
+  ## numpy's default `method="linear"`, so `quantile(x, 0.5) == median(x)`.
+  quantiles(a, [q]).buf[0]
+
 proc percentile*[T](a: NDArray[T], p: float): float = quantile(a, p / 100.0)
 
-proc quantiles*[T](a: NDArray[T], qs: openArray[float]): NDArray[float] =
-  result = newNDArray[float](qs.len)
-  for i, q in qs: result.buf[i] = quantile(a, q)
-
-proc iqr*[T](a: NDArray[T]): float = quantile(a, 0.75) - quantile(a, 0.25)
+proc iqr*[T](a: NDArray[T]): float =
+  let qs = quantiles(a, [0.25, 0.75])
+  qs.buf[1] - qs.buf[0]
 
 # `quantiles`, `percentile` and `iqr` inherit the propagation from `quantile`
 # rather than restating it.
@@ -125,8 +141,7 @@ proc nanMedian*[T: SomeFloat](a: NDArray[T]): float =
 
 proc nanQuantile*[T: SomeFloat](a: NDArray[T], q: float): float =
   ## `quantile` over the values that are not NaN.
-  if not (q >= 0.0 and q <= 1.0):
-    raise newException(ValueError, "nanQuantile: q must be in 0..1, got " & $q)
+  checkQ(q, "nanQuantile")
   let xs = withoutNaN(a)
   if xs.len == 0:
     raise newException(ValueError, "nanQuantile of an array with no values in it")
