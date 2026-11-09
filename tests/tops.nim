@@ -17,6 +17,18 @@ suite "arithmetic":
     check (a div 2).toSeq() == @[0, 1, 1]
     check (a mod 2).toSeq() == @[1, 0, 1]
 
+  test "a scalar reads from either side of /, div and mod":
+    let a = toNDArray(@[1, 2, 3])
+    check (6 / a).toSeq() == @[6.0, 3.0, 2.0]
+    check (7 div a).toSeq() == @[7, 3, 2]
+    check (7 mod a).toSeq() == @[0, 1, 1]
+    let f = toNDArray(@[1.0, 2.0, 4.0])
+    check (f / 2.0).toSeq() == @[0.5, 1.0, 2.0]
+    check (2.0 / f).toSeq() == @[2.0, 1.0, 0.5]
+    let m = arange(6).reshape(2, 3)
+    check (12 div (m + 1)).shape == @[2, 3]
+    check (12 div (m + 1)).toSeq() == @[12, 6, 4, 3, 2, 2]
+
   test "binary ops broadcast":
     let a = arange(6).reshape(2, 3)
     let b = arange(3)

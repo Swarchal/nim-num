@@ -85,19 +85,21 @@ binOp(`*`, x * y)
 proc `-`*[T](a: NDArray[T]): NDArray[T] = mapIt(a, -it)
 
 proc `/`*[T: SomeFloat](a, b: NDArray[T]): NDArray[T] = zipIt(a, b, x / y)
-proc `/`*[T: SomeFloat](a: NDArray[T], s: T): NDArray[T] = mapIt(a, it / s)
-proc `/`*[T: SomeFloat](s: T, a: NDArray[T]): NDArray[T] = mapIt(a, s / it)
+proc `/`*[T: SomeFloat](a: NDArray[T], s: T): NDArray[T] = a / scalarArray(s)
+proc `/`*[T: SomeFloat](s: T, a: NDArray[T]): NDArray[T] = scalarArray(s) / a
 
 proc `/`*(a, b: NDArray[int]): NDArray[float] = zipIt(a, b, x.float / y.float)
-proc `/`*(a: NDArray[int], s: int): NDArray[float] = mapIt(a, it.float / s.float)
-proc `/`*(s: int, a: NDArray[int]): NDArray[float] = mapIt(a, s.float / it.float)
+proc `/`*(a: NDArray[int], s: int): NDArray[float] = a / scalarArray(s)
+proc `/`*(s: int, a: NDArray[int]): NDArray[float] = scalarArray(s) / a
   ## Integer division gives floats, as numpy's `/` does; `div` is the
   ## truncating one. This is the same rule racoon's `/` follows.
 
 proc `div`*(a, b: NDArray[int]): NDArray[int] = zipIt(a, b, x div y)
-proc `div`*(a: NDArray[int], s: int): NDArray[int] = mapIt(a, it div s)
+proc `div`*(a: NDArray[int], s: int): NDArray[int] = a div scalarArray(s)
+proc `div`*(s: int, a: NDArray[int]): NDArray[int] = scalarArray(s) div a
 proc `mod`*(a, b: NDArray[int]): NDArray[int] = zipIt(a, b, x mod y)
-proc `mod`*(a: NDArray[int], s: int): NDArray[int] = mapIt(a, it mod s)
+proc `mod`*(a: NDArray[int], s: int): NDArray[int] = a mod scalarArray(s)
+proc `mod`*(s: int, a: NDArray[int]): NDArray[int] = scalarArray(s) mod a
 
 template inplaceZip(dst, src, op: untyped) =
   ## The body every compound assignment shares: broadcast the right-hand
