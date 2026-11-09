@@ -29,6 +29,20 @@ suite "selection":
     expect ValueError: discard a[0, 1..9]
     expect ValueError: discard span(0, 3, 0)
 
+  test "a negative int counts from the end in a selection, as in element access":
+    check a[-1, All].toSeq() == @[8, 9, 10, 11]
+    check a[-1, All] == a[^1, All]
+    check a[All, -1].toSeq() == @[3, 7, 11]
+    check a[-1, All][0] == a[-1, 0]
+    check a.row(-1) == a.row(2)
+    check a.col(-4) == a.col(0)
+    check a[0, 0 .. -1].size == 0             # spans keep `a ..< a`, not "from the end"
+    expect ValueError: discard a[-4, All]
+    expect ValueError: discard a.row(-4)
+    var b = arange(6).reshape(2, 3)
+    b[-1, All] = 0
+    check b.toSeq() == @[0, 1, 2, 0, 0, 0]
+
   test "row and col are 2-d shorthands":
     check a.row(1) == a[1, All]
     check a.col(1) == a[All, 1]

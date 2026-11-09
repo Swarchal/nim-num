@@ -85,7 +85,12 @@ func applySel(s: Sel, n, stride: int): tuple[len, stride, offset: int, drop: boo
     # `Rest` has been expanded into `All`s by `expandRest` before this runs
     (n, stride, 0, false)
   of selIndex:
-    let i = resolve(s.idx, s.idxFromEnd, n)
+    # A negative plain index counts from the end, as it does in `flatOffset`
+    # and `take`, so `a[-1, All]` is the row `a[-1, 0]` reads from. Spans do
+    # not get this: `0 .. -1` is the empty slice, not the whole axis.
+    let i =
+      if not s.idxFromEnd and s.idx < 0: s.idx + n
+      else: resolve(s.idx, s.idxFromEnd, n)
     if i < 0 or i >= n:
       raise newException(ValueError,
         "index " & $s.idx & " out of range for an axis of length " & $n)
