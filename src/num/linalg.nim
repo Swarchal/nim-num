@@ -128,9 +128,14 @@ type LU = object
   swaps: int
   singular: bool
 
-proc luDecompose(a: NDArray[float]): LU =
+func checkSquare(a: NDArray[float]) =
+  ## The one statement of what the LU readings accept. It has to run before
+  ## anything reads `a.shape[0]`, or a 0-d array raises `IndexDefect`.
   if a.ndim != 2 or a.shape[0] != a.shape[1]:
     raise newException(ValueError, "expected a square matrix, got " & $a.shape)
+
+proc luDecompose(a: NDArray[float]): LU =
+  checkSquare(a)
   let n = a.shape[0]
   result.m = a.copy()
   result.perm = newSeq[int](n)
@@ -207,6 +212,7 @@ proc inv*(a: NDArray[float]): NDArray[float] =
   ## Matrix inverse, as the solve against the identity. Prefer `solve` when
   ## the inverse is only on its way to a product — it is both faster and
   ## better conditioned.
+  checkSquare(a)
   solve(a, eye[float](a.shape[0]))
 
 # ------------------------------------------------- QR-based solvers --------

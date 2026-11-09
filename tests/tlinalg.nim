@@ -89,6 +89,14 @@ suite "solving":
                                      toNDArray(@[1.0, 2.0]))
     expect ValueError: discard solve(zeros[float](2, 3), toNDArray(@[1.0, 2.0]))
 
+  test "a non-square input raises ValueError, a 0-d one included":
+    # `inv` used to read shape[0] before the shape was checked, so a 0-d
+    # array raised IndexDefect, which `except ValueError` does not catch.
+    for bad in [scalarArray(2.0), toNDArray(@[1.0, 2.0]), zeros[float](2, 3)]:
+      expect ValueError: discard inv(bad)
+      expect ValueError: discard det(bad)
+      expect ValueError: discard solve(bad, toNDArray(@[1.0, 2.0]))
+
   test "lstsq fits a line":
     # y = 2x + 1 exactly, so the least-squares fit is the line itself
     let x = toNDArray(@[0.0, 1.0, 2.0, 3.0])
