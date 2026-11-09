@@ -227,17 +227,14 @@ proc concat*[T](arrays: openArray[NDArray[T]], axis = 0): NDArray[T] =
   result = newNDArray[T](shape)
   var at = 0
   for a in arrays:
-    # write each source into the slot it owns along `ax`, elementwise so that
-    # a non-contiguous source needs no temporary
-    var idx = newSeq[int](nd)
-    for off in a.offsets:
-      var dst = idx
-      dst[ax] += at
-      result.setElem(dst, a.buf[off])
-      for k in countdown(nd - 1, 0):
-        idx[k] += 1
-        if idx[k] < a.shape[k]: break
-        idx[k] = 0
+    # Each source is written into the slot it owns along `ax`: a view of the
+    # result with the source's shape, walked in lockstep with it. A
+    # non-contiguous source needs no temporary, and no element pays for a
+    # multi-index or a bounds check — the shapes were checked above.
+    let slot = result.view(a.shape, result.strides,
+                           result.offset + at * result.strides[ax])
+    for od, os in offsets2(slot, a):
+      result.buf[od] = a.buf[os]
     at += a.shape[ax]
 
 proc stack*[T](arrays: openArray[NDArray[T]], axis = 0): NDArray[T] =
